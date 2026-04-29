@@ -1,23 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   PieChart,
   Pie,
   Cell,
   Tooltip,
-  Legend,
+  ResponsiveContainer,
   BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
-  ResponsiveContainer,
 } from 'recharts';
-import { ShoppingCart, AlertCircle, Clock, CreditCard } from 'lucide-react';
 
 interface Gasto {
   id: number;
@@ -50,12 +46,13 @@ interface TarjetaResumen {
   saldoActual: number;
 }
 
-const PIE_COLORS = [
-  '#3B82F6', '#10B981', '#F59E0B', '#EF4444',
-  '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16',
-];
+const DONUT_COLORS = ['var(--teal)', 'var(--warn)', 'var(--pos)', 'var(--neg)', 'var(--ink-mute)'];
 
-function formatMoney(n: number) {
+function fmtNum(n: number) {
+  return new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(n);
+}
+
+function fmtARS(n: number) {
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
@@ -63,20 +60,38 @@ function formatMoney(n: number) {
   }).format(n);
 }
 
-function formatMes(mes: string) {
-  const [year, month] = mes.split('-');
-  return new Date(Number(year), Number(month) - 1).toLocaleDateString('es-AR', {
+function fmtCompact(n: number) {
+  return new Intl.NumberFormat('es-AR', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(n);
+}
+
+function fmtMes(mes: string) {
+  const [y, m] = mes.split('-');
+  return new Date(Number(y), Number(m) - 1).toLocaleDateString('es-AR', {
     month: 'short',
     year: '2-digit',
   });
 }
 
+function daysUntil(date: string | undefined) {
+  if (!date) return null;
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return Math.ceil((d.getTime() - now.getTime()) / 86_400_000);
+}
+
 const TOOLTIP_STYLE = {
-  background: '#18181b',
-  border: '1px solid #3f3f46',
-  borderRadius: 8,
-  color: '#f4f4f5',
-  fontSize: 13,
+  background: 'oklch(1 0 0)',
+  border: '1px solid var(--rule)',
+  borderRadius: 6,
+  color: 'var(--ink)',
+  fontSize: 12,
+  padding: '8px 10px',
+  boxShadow: '0 8px 24px -12px oklch(0.25 0.02 240 / 0.18)',
 };
 
 export default function DashboardPage() {
@@ -96,15 +111,12 @@ export default function DashboardPage() {
           api.get('/deudas/proyeccion'),
           api.get('/tarjetas'),
         ]);
-        console.log('gastos:', g);
-        console.log('deudas:', d);
-        console.log('tarjetas:', t);
         setGastos(g);
         setDeudas(d);
         setProyeccion(p);
         setTarjetas(t);
       } catch {
-        setError('Error al cargar los datos.');
+        setError('No se pudieron cargar los datos.');
       } finally {
         setLoading(false);
       }
@@ -114,265 +126,375 @@ export default function DashboardPage() {
 
   const now = new Date();
 
-  const totalMes = gastos
-    .filter((g) => {
-      const fecha = new Date(g.creadoEn ?? g.createdAt ?? g.fecha ?? '');
-      if (isNaN(fecha.getTime())) return false;
-      return fecha.getMonth() === now.getMonth() && fecha.getFullYear() === now.getFullYear();
-    })
-    .reduce((acc, g) => acc + Number(g.monto), 0);
+  const { totalMes, totalMesPrev, deltaPct } = useMemo(() => {
+    const cur = new Date(now.getFullYear(), now.getMonth(), 1);
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    let curT = 0, prevT = 0;
+    for (const g of gastos) {
+      const f = new Date(g.fecha ?? g.creadoEn ?? g.createdAt ?? '');
+      if (isNaN(f.getTime())) continue;
+      if (f >= cur && f < next) curT += Number(g.monto);
+      else if (f >= prev && f < cur) prevT += Number(g.monto);
+    }
+    const dp = prevT > 0 ? ((curT - prevT) / prevT) * 100 : null;
+    return { totalMes: curT, totalMesPrev: prevT, deltaPct: dp };
+  }, [gastos, now]);
 
   const deudasPendientes = deudas.filter((d) => d.estado === 'pendiente');
-  const totalDeudas = deudasPendientes.reduce((acc, d) => acc + Number(d.montoTotal), 0);
+  const totalDeudas = deudasPendientes.reduce((a, d) => a + Number(d.montoTotal), 0);
+  const totalTarjetas = tarjetas.reduce((s, t) => s + Number(t.saldoActual), 0);
 
-  const totalTarjetas = tarjetas.reduce((sum, t) => sum + Number(t.saldoActual), 0);
-
-  const proximaDeuda = deudasPendientes
+  const proxima = deudasPendientes
     .filter((d) => d.fechaVencimiento ?? d.vencimiento)
     .sort((a, b) => {
-      const fa = new Date(a.fechaVencimiento ?? a.vencimiento ?? '');
-      const fb = new Date(b.fechaVencimiento ?? b.vencimiento ?? '');
-      return fa.getTime() - fb.getTime();
+      const fa = new Date(a.fechaVencimiento ?? a.vencimiento ?? '').getTime();
+      const fb = new Date(b.fechaVencimiento ?? b.vencimiento ?? '').getTime();
+      return fa - fb;
     })[0];
 
-  const categoriaMap: Record<string, number> = {};
-  for (const g of gastos) {
-    categoriaMap[g.categoria] = (categoriaMap[g.categoria] ?? 0) + Number(g.monto);
-  }
-  const pieData = Object.entries(categoriaMap).map(([name, value]) => ({ name, value }));
+  const proxDays = proxima ? daysUntil(proxima.fechaVencimiento ?? proxima.vencimiento) : null;
+
+  // Categorías — top 4 + otras
+  const catData = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const g of gastos) m[g.categoria] = (m[g.categoria] ?? 0) + Number(g.monto);
+    const sorted = Object.entries(m).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+    if (sorted.length <= 5) return sorted;
+    const top = sorted.slice(0, 4);
+    const otrasTotal = sorted.slice(4).reduce((s, x) => s + x.value, 0);
+    return [...top, { name: 'otras', value: otrasTotal }];
+  }, [gastos]);
+
+  const catTotal = catData.reduce((s, x) => s + x.value, 0);
 
   const barData = proyeccion.slice(0, 6).map((p) => ({
-    mes: formatMes(p.mes),
+    mes: fmtMes(p.mes),
     total: p.total,
   }));
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-red-400 text-sm">{error}</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Dashboard</h1>
-        <p className="text-sm text-zinc-500 mt-0.5">
-          {now.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-        </p>
-      </div>
+    <div className="px-5 lg:px-8 py-7 max-w-7xl">
+      {error && (
+        <div className="mb-6 px-4 py-3 bg-neg-bg border border-neg/20 rounded-md">
+          <span className="text-[13px] text-neg">{error}</span>
+        </div>
+      )}
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {loading ? (
-          <>
-            <Skeleton className="h-32 rounded-2xl bg-zinc-800" />
-            <Skeleton className="h-32 rounded-2xl bg-zinc-800" />
-            <Skeleton className="h-32 rounded-2xl bg-zinc-800" />
-            <Skeleton className="h-32 rounded-2xl bg-zinc-800" />
-          </>
-        ) : (
-          <>
-            {/* Gastado este mes */}
-            <Card className="bg-zinc-900 border border-zinc-800 ring-0 rounded-2xl">
-              <CardHeader className="pb-1">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    Gastado este mes
-                  </CardTitle>
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10">
-                    <ShoppingCart className="h-4 w-4 text-blue-400" />
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-blue-400 tracking-tight">
-                  {formatMoney(totalMes)}
-                </p>
-                <p className="text-xs text-zinc-600 mt-1">mes actual</p>
-              </CardContent>
-            </Card>
+      {/* Stat row — number-first hierarchy */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-rule border border-rule rounded-lg overflow-hidden">
+        <Stat
+          label="Gastos del mes"
+          value={loading ? null : totalMes}
+          delta={loading ? null : deltaPct}
+          deltaPositive={false}
+          aux={loading ? '' : totalMesPrev > 0 ? `Mes anterior ${fmtARS(totalMesPrev)}` : 'Sin histórico previo'}
+        />
+        <Stat
+          label="Deuda pendiente"
+          value={loading ? null : totalDeudas}
+          aux={loading ? '' : `${deudasPendientes.length} ${deudasPendientes.length === 1 ? 'deuda activa' : 'deudas activas'}`}
+          tone="neg"
+        />
+        <Stat
+          label="Saldo en tarjetas"
+          value={loading ? null : totalTarjetas}
+          aux={loading ? '' : `${tarjetas.length} ${tarjetas.length === 1 ? 'cuenta' : 'cuentas'}`}
+        />
+        <NextDue
+          loading={loading}
+          dias={proxDays}
+          desc={proxima?.descripcion}
+          fecha={proxima?.fechaVencimiento ?? proxima?.vencimiento}
+        />
+      </section>
 
-            {/* Total deudas */}
-            <Card className="bg-zinc-900 border border-zinc-800 ring-0 rounded-2xl">
-              <CardHeader className="pb-1">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    Deudas pendientes
-                  </CardTitle>
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/10">
-                    <AlertCircle className="h-4 w-4 text-red-400" />
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-red-400 tracking-tight">
-                  {formatMoney(totalDeudas)}
-                </p>
-                <p className="text-xs text-zinc-600 mt-1">
-                  {deudasPendientes.length} deuda{deudasPendientes.length !== 1 ? 's' : ''} activa{deudasPendientes.length !== 1 ? 's' : ''}
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Próxima deuda */}
-            <Card className="bg-zinc-900 border border-zinc-800 ring-0 rounded-2xl">
-              <CardHeader className="pb-1">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    Próxima a vencer
-                  </CardTitle>
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10">
-                    <Clock className="h-4 w-4 text-amber-400" />
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {proximaDeuda ? (
-                  <>
-                    <p className="text-base font-semibold text-zinc-100 truncate leading-tight">
-                      {proximaDeuda.descripcion}
-                    </p>
-                    <p className="text-sm font-[family-name:var(--font-mono)] text-amber-400 mt-1">
-                      {new Date(proximaDeuda.fechaVencimiento ?? proximaDeuda.vencimiento ?? '').toLocaleDateString('es-AR', {
-                        day: '2-digit', month: 'short', year: 'numeric',
-                      })}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-sm text-zinc-600 mt-2">Sin deudas próximas</p>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Total tarjetas */}
-            <Card className="bg-zinc-900 border border-zinc-800 ring-0 rounded-2xl">
-              <CardHeader className="pb-1">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    Total tarjetas
-                  </CardTitle>
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/10">
-                    <CreditCard className="h-4 w-4 text-violet-400" />
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-violet-400 tracking-tight">
-                  {formatMoney(totalTarjetas)}
-                </p>
-                <div className="flex items-center gap-2 mt-1">
-                  <p className="text-xs text-zinc-600">
-                    {tarjetas.length} tarjeta{tarjetas.length !== 1 ? 's' : ''}
-                  </p>
-                  {totalTarjetas > 500000 && (
-                    <span className="text-xs font-medium bg-red-500/15 text-red-400 border border-red-500/25 rounded px-1.5 py-0.5">
-                      ⚠ Atención
-                    </span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
-      </div>
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Pie chart */}
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-          <h2 className="text-sm font-semibold text-zinc-300 mb-4">
-            Distribución por categoría
-          </h2>
+      {/* Two-column block: donut + ladder */}
+      <section className="mt-10 grid grid-cols-1 lg:grid-cols-5 gap-10">
+        {/* Donut */}
+        <div className="lg:col-span-2">
+          <SectionHeader
+            title="Por categoría"
+            meta={loading ? '' : catData.length > 0 ? `${catData.length} categorías` : ''}
+          />
           {loading ? (
-            <Skeleton className="h-64 rounded-xl bg-zinc-800" />
-          ) : pieData.length === 0 ? (
-            <div className="flex h-64 items-center justify-center text-zinc-600 text-sm">
-              Sin gastos registrados
-            </div>
+            <div className="h-64 mt-4 bg-paper-deep animate-pulse rounded-md" />
+          ) : catData.length === 0 ? (
+            <Empty msg="Aún no hay gastos registrados" />
           ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={65}
-                  outerRadius={105}
-                  paddingAngle={3}
-                  dataKey="value"
-                  stroke="none"
-                >
-                  {pieData.map((entry, i) => (
-                    <Cell key={entry.name} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(v) => formatMoney(Number(v))}
-                  contentStyle={TOOLTIP_STYLE}
-                  itemStyle={{ color: '#f4f4f5' }}
-                  cursor={false}
-                />
-                <Legend
-                  formatter={(v) => (
-                    <span style={{ color: '#a1a1aa', fontSize: 12 }}>{v}</span>
-                  )}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-6 items-center">
+              <div className="relative h-[180px]">
+                <ResponsiveContainer width="100%" height={180}>
+                  <PieChart>
+                    <Pie
+                      data={catData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={56}
+                      outerRadius={84}
+                      paddingAngle={1}
+                      dataKey="value"
+                      stroke="var(--paper)"
+                      strokeWidth={2}
+                    >
+                      {catData.map((_, i) => (
+                        <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(v) => fmtARS(Number(v))}
+                      contentStyle={TOOLTIP_STYLE}
+                      itemStyle={{ color: 'var(--ink)' }}
+                      cursor={false}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="eyebrow">Total</span>
+                  <span className="font-mono text-[14px] text-ink mt-1">{fmtARS(catTotal)}</span>
+                </div>
+              </div>
+
+              <ul className="space-y-2.5">
+                {catData.map((c, i) => {
+                  const pct = catTotal > 0 ? (c.value / catTotal) * 100 : 0;
+                  return (
+                    <li key={c.name} className="flex items-center gap-3 text-[13px]">
+                      <span
+                        className="h-2 w-2 rounded-full shrink-0"
+                        style={{ background: DONUT_COLORS[i % DONUT_COLORS.length] }}
+                      />
+                      <span className="capitalize text-ink-soft truncate">{c.name}</span>
+                      <span className="ml-auto font-mono text-ink">{fmtARS(c.value)}</span>
+                      <span className="font-mono text-ink-mute text-[11.5px] w-10 text-right">
+                        {pct.toFixed(0)}%
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
         </div>
 
-        {/* Bar chart */}
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-          <h2 className="text-sm font-semibold text-zinc-300 mb-4">
-            Proyección de deudas — próximos 6 meses
-          </h2>
+        {/* Vertical hairline */}
+        <div className="hidden lg:block lg:col-span-3">
+          <SectionHeader
+            title="Proyección de deudas"
+            meta={loading ? '' : barData.length > 0 ? `Próximos ${barData.length} meses` : ''}
+          />
           {loading ? (
-            <Skeleton className="h-64 rounded-xl bg-zinc-800" />
+            <div className="h-64 mt-4 bg-paper-deep animate-pulse rounded-md" />
           ) : barData.length === 0 ? (
-            <div className="flex h-64 items-center justify-center text-zinc-600 text-sm">
-              Sin proyección disponible
-            </div>
+            <Empty msg="Sin proyección disponible" />
           ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={barData} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                <XAxis
-                  dataKey="mes"
-                  tick={{ fill: '#71717a', fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fill: '#71717a', fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) =>
-                    new Intl.NumberFormat('es-AR', {
-                      notation: 'compact',
-                      maximumFractionDigits: 0,
-                    }).format(v)
-                  }
-                />
-                <Tooltip
-                  formatter={(v) => formatMoney(Number(v))}
-                  contentStyle={TOOLTIP_STYLE}
-                  itemStyle={{ color: '#f4f4f5' }}
-                  cursor={{ fill: '#27272a' }}
-                />
-                <Bar
-                  dataKey="total"
-                  fill="#3B82F6"
-                  radius={[6, 6, 0, 0]}
-                  maxBarSize={48}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="mt-4 -ml-4">
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={barData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--rule)" vertical={false} />
+                  <XAxis
+                    dataKey="mes"
+                    tick={{ fill: 'var(--ink-mute)', fontSize: 11 }}
+                    axisLine={{ stroke: 'var(--rule)' }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: 'var(--ink-mute)', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => fmtCompact(v)}
+                    width={56}
+                  />
+                  <Tooltip
+                    formatter={(v) => fmtARS(Number(v))}
+                    contentStyle={TOOLTIP_STYLE}
+                    itemStyle={{ color: 'var(--ink)' }}
+                    labelStyle={{ color: 'var(--ink-mute)' }}
+                    cursor={{ fill: 'var(--paper-deep)' }}
+                  />
+                  <Bar dataKey="total" fill="var(--teal)" radius={[3, 3, 0, 0]} maxBarSize={36} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </div>
+
+        {/* Mobile-only proyección */}
+        <div className="lg:hidden">
+          <SectionHeader title="Proyección de deudas" />
+          {loading ? (
+            <div className="h-56 mt-4 bg-paper-deep animate-pulse rounded-md" />
+          ) : barData.length === 0 ? (
+            <Empty msg="Sin proyección" />
+          ) : (
+            <div className="mt-4 -ml-4">
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={barData}>
+                  <CartesianGrid stroke="var(--rule)" vertical={false} />
+                  <XAxis dataKey="mes" tick={{ fill: 'var(--ink-mute)', fontSize: 11 }} axisLine={{ stroke: 'var(--rule)' }} tickLine={false} />
+                  <YAxis tick={{ fill: 'var(--ink-mute)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={fmtCompact} width={48} />
+                  <Tooltip formatter={(v) => fmtARS(Number(v))} contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'var(--paper-deep)' }} />
+                  <Bar dataKey="total" fill="var(--teal)" radius={[3, 3, 0, 0]} maxBarSize={32} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Recent activity */}
+      <section className="mt-10 border-t border-rule pt-7">
+        <SectionHeader
+          title="Actividad reciente"
+          meta={loading ? '' : `Últimos ${Math.min(8, gastos.length)} de ${gastos.length}`}
+        />
+        {loading ? (
+          <div className="mt-4 space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-10 bg-paper-deep animate-pulse rounded-md" />
+            ))}
+          </div>
+        ) : gastos.length === 0 ? (
+          <Empty msg="Aún no hay movimientos" />
+        ) : (
+          <ul className="mt-4 divide-y divide-rule-soft">
+            {[...gastos]
+              .sort((a, b) =>
+                new Date(b.fecha ?? b.creadoEn ?? b.createdAt ?? '').getTime() -
+                new Date(a.fecha ?? a.creadoEn ?? a.createdAt ?? '').getTime()
+              )
+              .slice(0, 8)
+              .map((g) => {
+                const f = new Date(g.fecha ?? g.creadoEn ?? g.createdAt ?? '');
+                const dateStr = isNaN(f.getTime())
+                  ? '—'
+                  : f.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+                return (
+                  <li
+                    key={g.id}
+                    className="grid grid-cols-[80px_140px_1fr_auto] items-center gap-4 py-3 text-[13px]"
+                  >
+                    <span className="font-mono text-ink-mute">{dateStr}</span>
+                    <span className="eyebrow truncate">{g.categoria}</span>
+                    <span className="text-ink-soft truncate">
+                      {g.descripcion ?? <span className="text-ink-faint">Sin descripción</span>}
+                    </span>
+                    <span className="font-mono text-ink text-right">
+                      <span className="peso">$</span>{fmtNum(Number(g.monto))}
+                    </span>
+                  </li>
+                );
+              })}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  delta,
+  deltaPositive,
+  aux,
+  tone,
+}: {
+  label: string;
+  value: number | null;
+  delta?: number | null;
+  deltaPositive?: boolean;
+  aux?: string;
+  tone?: 'neg' | 'pos';
+}) {
+  const valueColor = tone === 'neg' ? 'text-neg' : 'text-ink';
+  return (
+    <div className="bg-paper-lifted px-5 py-5">
+      <div className="eyebrow">{label}</div>
+      {value === null ? (
+        <div className="mt-2 h-7 w-32 bg-paper-deep animate-pulse rounded-sm" />
+      ) : (
+        <div className={`mt-1.5 font-mono text-[26px] leading-none tracking-tight ${valueColor}`}>
+          <span className="peso">$</span>
+          {fmtNum(value)}
+        </div>
+      )}
+      <div className="mt-2 flex items-center gap-2 text-[12px]">
+        {delta != null && (
+          <span
+            className={`inline-flex items-center gap-1 font-mono ${
+              (deltaPositive === false ? delta > 0 : delta < 0) ? 'text-neg' : 'text-pos'
+            }`}
+          >
+            <span>{delta >= 0 ? '↑' : '↓'}</span>
+            <span>{Math.abs(delta).toFixed(1)}%</span>
+          </span>
+        )}
+        {aux && <span className="text-ink-mute truncate">{aux}</span>}
       </div>
+    </div>
+  );
+}
+
+function NextDue({
+  loading,
+  dias,
+  desc,
+  fecha,
+}: {
+  loading: boolean;
+  dias: number | null;
+  desc?: string;
+  fecha?: string;
+}) {
+  let tone = 'text-ink';
+  if (dias !== null) {
+    if (dias < 0) tone = 'text-neg';
+    else if (dias <= 7) tone = 'text-warn';
+  }
+  return (
+    <div className="bg-paper-lifted px-5 py-5">
+      <div className="eyebrow">Próximo vencimiento</div>
+      {loading ? (
+        <div className="mt-2 h-7 w-24 bg-paper-deep animate-pulse rounded-sm" />
+      ) : dias === null || !desc ? (
+        <>
+          <div className="mt-1.5 font-serif text-[18px] text-ink-mute leading-tight">Sin vencimientos</div>
+          <div className="mt-2 text-[12px] text-ink-faint">Todo al día</div>
+        </>
+      ) : (
+        <>
+          <div className={`mt-1.5 font-mono text-[26px] leading-none tracking-tight ${tone}`}>
+            {dias >= 0 ? `en ${dias}d` : `−${Math.abs(dias)}d`}
+          </div>
+          <div className="mt-2 text-[12px] text-ink-mute truncate">
+            {desc}
+            {fecha && (
+              <span className="text-ink-faint">
+                {' · '}
+                {new Date(fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })}
+              </span>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SectionHeader({ title, meta }: { title: string; meta?: string }) {
+  return (
+    <div className="flex items-baseline justify-between">
+      <h2 className="serif text-[17px] font-medium text-ink tracking-tight">{title}</h2>
+      {meta && <span className="text-[12px] text-ink-mute">{meta}</span>}
+    </div>
+  );
+}
+
+function Empty({ msg }: { msg: string }) {
+  return (
+    <div className="mt-6 py-10 text-center">
+      <span className="text-[13px] text-ink-faint">{msg}</span>
     </div>
   );
 }

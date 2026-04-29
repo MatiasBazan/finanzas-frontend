@@ -3,9 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { TrendingUp } from 'lucide-react';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -21,97 +19,112 @@ export default function LoginPage() {
     try {
       await login(email, password);
     } catch {
-      setError('Credenciales incorrectas. Verificá tu email y contraseña.');
+      setError('No pudimos iniciar sesión. Revisá tu email y contraseña.');
     } finally {
       setLoading(false);
     }
   }
 
+  const inputCls =
+    'h-10 bg-paper-deep border border-edge rounded-md text-ink placeholder:text-ink-faint text-[14px] px-3 focus-visible:border-teal focus-visible:ring-2 focus-visible:ring-teal/15 font-mono';
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-950 px-4">
-      {/* Background glow */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -top-40 left-1/2 -translate-x-1/2 h-80 w-80 rounded-full bg-blue-600/10 blur-3xl" />
-        <div className="absolute -bottom-40 left-1/2 -translate-x-1/2 h-80 w-80 rounded-full bg-violet-600/10 blur-3xl" />
-      </div>
+    <div className="min-h-screen bg-paper text-ink flex flex-col">
+      {/* Top wordmark */}
+      <header className="h-16 border-b border-rule flex items-center px-6 lg:px-8">
+        <Link href="/login" className="flex items-baseline gap-1.5">
+          <span className="serif text-[20px] font-medium tracking-tight text-ink leading-none">
+            Finanzas
+          </span>
+          <span className="text-[11px] text-ink-faint tracking-wide leading-none">·AR</span>
+        </Link>
+      </header>
 
-      <div className="relative w-full max-w-sm">
-        {/* Logo */}
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 shadow-xl shadow-blue-500/30">
-            <TrendingUp className="h-6 w-6 text-white" />
-          </div>
-          <div className="text-center">
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-              Finanzas Personales
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500">Ingresá a tu cuenta</p>
-          </div>
-        </div>
+      <div className="flex-1 flex items-center justify-center px-4 py-10">
+        <div className="w-full max-w-sm">
+          <p className="eyebrow">Acceso</p>
+          <h1 className="serif text-[28px] font-medium text-ink mt-1.5 tracking-tight leading-tight">
+            Iniciá sesión
+          </h1>
+          <p className="mt-2 text-[13.5px] text-ink-mute">
+            Ingresá tu email y contraseña para continuar.
+          </p>
 
-        {/* Card */}
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl shadow-black/40">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400" htmlFor="email">
-                Email
-              </label>
+          <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+            <Field label="Email">
               <Input
-                id="email"
                 type="email"
                 placeholder="tu@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
-                className="bg-zinc-800 border-zinc-700 text-zinc-100 placeholder:text-zinc-600 focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
+                className={inputCls}
               />
-            </div>
+            </Field>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400" htmlFor="password">
-                Contraseña
-              </label>
+            <Field label="Contraseña">
               <Input
-                id="password"
                 type="password"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="bg-zinc-800 border-zinc-700 text-zinc-100 placeholder:text-zinc-600 focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
+                className={inputCls}
               />
-            </div>
+            </Field>
 
             {error && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-400">
-                {error}
+              <div className="px-3 py-2.5 bg-neg-bg border-l-2 border-neg rounded-r-sm">
+                <span className="text-[12.5px] text-neg">{error}</span>
               </div>
             )}
 
-            <Button
+            <button
               type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-lg shadow-blue-500/20 transition-all"
               disabled={loading}
+              className="w-full h-10 text-[13.5px] font-medium bg-teal text-paper hover:bg-ink rounded-md disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
             >
               {loading ? (
-                <span className="flex items-center gap-2">
-                  <span className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                  Ingresando...
-                </span>
-              ) : 'Ingresar'}
-            </Button>
+                <>
+                  <span className="h-1.5 w-1.5 rounded-full bg-paper animate-pulse" />
+                  <span>Ingresando…</span>
+                </>
+              ) : (
+                <span>Ingresar</span>
+              )}
+            </button>
           </form>
 
-          <p className="mt-5 text-center text-sm text-zinc-500">
+          <p className="mt-6 pt-5 border-t border-rule text-[13px] text-ink-mute">
             ¿No tenés cuenta?{' '}
-            <Link href="/register" className="font-medium text-blue-400 hover:text-blue-300 transition-colors">
-              Registrate
+            <Link href="/register" className="text-teal hover:underline underline-offset-2">
+              Creá una cuenta
             </Link>
           </p>
         </div>
       </div>
+
+      <footer className="border-t border-rule px-6 lg:px-8 py-4 text-[11.5px] text-ink-faint flex items-center justify-between">
+        <span>Finanzas · gestión personal</span>
+        <span className="hidden sm:inline">ARS / USD</span>
+      </footer>
     </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="text-[12.5px] text-ink-soft font-medium block mb-1.5">{label}</span>
+      {children}
+    </label>
   );
 }

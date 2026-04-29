@@ -1,27 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { parsearResumenPDF, type ResumenTarjeta } from '@/lib/parse-resumen';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { CreditCard, Plus, Trash2, AlertTriangle, CheckCircle, Clock, Sparkles, Upload, FileText, X } from 'lucide-react';
 
 interface TarjetaResumen {
   id: number;
@@ -36,7 +23,11 @@ interface TarjetaResumen {
   fechaImportacion: string;
 }
 
-function formatMoney(n: number) {
+function fmtNum(n: number) {
+  return new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(n);
+}
+
+function fmtARS(n: number) {
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
@@ -44,7 +35,7 @@ function formatMoney(n: number) {
   }).format(n);
 }
 
-function formatMoneyUSD(n: number) {
+function fmtUSD(n: number) {
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'USD',
@@ -52,86 +43,39 @@ function formatMoneyUSD(n: number) {
   }).format(n);
 }
 
-function formatearFecha(fecha: string | Date | null | undefined): string {
-  if (!fecha) return 'Sin fecha';
+function fmtDate(fecha: string | Date | null | undefined): string {
+  if (!fecha) return '—';
   const d = new Date(fecha);
-  if (isNaN(d.getTime())) return 'Sin fecha';
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('es-AR', {
     day: '2-digit',
-    month: '2-digit',
+    month: 'short',
     year: 'numeric',
   });
 }
 
-function formatMes(mes: string) {
-  const [year, month] = mes.split('-');
-  return new Date(Number(year), Number(month) - 1).toLocaleDateString('es-AR', {
+function fmtMes(mes: string) {
+  const [y, m] = mes.split('-');
+  return new Date(Number(y), Number(m) - 1).toLocaleDateString('es-AR', {
     month: 'long',
     year: 'numeric',
   });
 }
 
-function diasHastaVencimiento(vencimiento: string) {
+function daysUntil(date: string) {
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
-  const vence = new Date(vencimiento + 'T00:00:00');
-  return Math.ceil((vence.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function VencimientoBadge({ vencimiento }: { vencimiento: string }) {
-  const dias = diasHastaVencimiento(vencimiento);
-  const fecha = formatearFecha(vencimiento + 'T00:00:00');
-
-  if (dias < 0) {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-zinc-400">{fecha}</span>
-        <Badge variant="outline" className="bg-red-500/15 text-red-400 border-red-500/25 text-xs">
-          Vencida
-        </Badge>
-      </div>
-    );
-  }
-  if (dias <= 7) {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-zinc-300">{fecha}</span>
-        <Badge variant="outline" className="bg-red-500/15 text-red-400 border-red-500/25 text-xs flex items-center gap-1">
-          <AlertTriangle className="h-3 w-3" /> {dias}d
-        </Badge>
-      </div>
-    );
-  }
-  if (dias <= 15) {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-zinc-300">{fecha}</span>
-        <Badge variant="outline" className="bg-amber-500/15 text-amber-400 border-amber-500/25 text-xs">
-          <Clock className="h-3 w-3 mr-1" />{dias}d
-        </Badge>
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-sm text-zinc-400">{fecha}</span>
-      <Badge variant="outline" className="bg-green-500/15 text-green-400 border-green-500/25 text-xs">
-        <CheckCircle className="h-3 w-3 mr-1" />{dias}d
-      </Badge>
-    </div>
-  );
+  const v = new Date(date + 'T00:00:00');
+  return Math.ceil((v.getTime() - hoy.getTime()) / 86_400_000);
 }
 
 type ImportStep = 'input' | 'loading' | 'preview' | 'saving';
-
-const TH = 'text-xs uppercase tracking-widest text-zinc-500 font-medium py-2.5';
 
 export default function TarjetasPage() {
   const [tarjetas, setTarjetas] = useState<TarjetaResumen[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
-  // Import dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [step, setStep] = useState<ImportStep>('input');
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -143,12 +87,16 @@ export default function TarjetasPage() {
   async function fetchTarjetas() {
     try {
       setTarjetas(await api.get('/tarjetas'));
-    } catch { /* ignore */ } finally {
+    } catch {
+      /* ignore */
+    } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { fetchTarjetas(); }, []);
+  useEffect(() => {
+    fetchTarjetas();
+  }, []);
 
   function openDialog() {
     setStep('input');
@@ -162,11 +110,11 @@ export default function TarjetasPage() {
   function handleFileSelect(file: File | null) {
     if (!file) return;
     if (file.type !== 'application/pdf') {
-      setImportError('Solo se aceptan archivos PDF.');
+      setImportError('El archivo debe ser un PDF.');
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
-      setImportError('El archivo es demasiado grande (máximo 10MB).');
+      setImportError('El archivo supera los 10 MB.');
       return;
     }
     setImportError('');
@@ -181,7 +129,7 @@ export default function TarjetasPage() {
 
   async function handleAnalizar() {
     if (!pdfFile) {
-      setImportError('Seleccioná un archivo PDF primero.');
+      setImportError('Seleccioná un archivo primero.');
       return;
     }
     setImportError('');
@@ -191,7 +139,7 @@ export default function TarjetasPage() {
       setPreview(parsed);
       setStep('preview');
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : 'Error al procesar con IA.');
+      setImportError(err instanceof Error ? err.message : 'No se pudo procesar el PDF.');
       setStep('input');
     }
   }
@@ -205,7 +153,7 @@ export default function TarjetasPage() {
       setLoading(true);
       await fetchTarjetas();
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : 'Error al guardar.');
+      setImportError(err instanceof Error ? err.message : 'No se pudo guardar.');
       setStep('preview');
     }
   }
@@ -214,192 +162,208 @@ export default function TarjetasPage() {
     try {
       await api.delete(`/tarjetas/${id}`);
       setTarjetas((prev) => prev.filter((t) => t.id !== id));
-    } catch { /* ignore */ } finally {
+    } catch {
+      /* ignore */
+    } finally {
       setDeleteId(null);
     }
   }
 
   return (
-    <div className="space-y-6">
+    <div className="px-5 lg:px-8 py-7 max-w-7xl">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-rule">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Tarjetas de crédito</h1>
-          <p className="text-sm text-zinc-500 mt-0.5">
-            {loading ? '...' : `${tarjetas.length} resumen${tarjetas.length !== 1 ? 'es' : ''} importado${tarjetas.length !== 1 ? 's' : ''}`}
+          <p className="eyebrow">Resúmenes importados</p>
+          <p className="mt-1 text-[13px] text-ink-mute">
+            {loading
+              ? 'Cargando…'
+              : `${tarjetas.length} ${tarjetas.length === 1 ? 'tarjeta' : 'tarjetas'} en seguimiento`}
           </p>
         </div>
-        <Button
+        <button
           onClick={openDialog}
-          className="bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 gap-1.5"
+          className="h-9 px-3.5 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md transition-colors"
         >
-          <Plus className="h-4 w-4" /> Importar resumen
-        </Button>
+          Importar resumen
+        </button>
       </div>
 
       {/* Cards */}
       {loading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <Skeleton className="h-64 rounded-2xl bg-zinc-800" />
-          <Skeleton className="h-64 rounded-2xl bg-zinc-800" />
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="h-72 bg-paper-deep animate-pulse rounded-lg" />
+          ))}
         </div>
       ) : tarjetas.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-900 py-20 gap-3">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-800">
-            <CreditCard className="h-7 w-7 text-zinc-600" />
-          </div>
-          <p className="text-zinc-500 text-sm">No hay resúmenes importados</p>
-          <Button
-            variant="ghost"
+        <div className="mt-10 py-16 border border-rule rounded-lg bg-paper-lifted text-center">
+          <p className="serif text-[18px] text-ink-soft">Aún no importaste ningún resumen</p>
+          <p className="mt-1 text-[13px] text-ink-mute">
+            Subí un PDF y la IA extrae saldos, vencimientos y cuotas.
+          </p>
+          <button
             onClick={openDialog}
-            className="text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 gap-1.5 mt-1"
+            className="mt-5 h-9 px-3.5 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md transition-colors"
           >
-            <Plus className="h-4 w-4" /> Importar primer resumen
-          </Button>
+            Importar primer resumen
+          </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {tarjetas.map((t) => (
-            <div
-              key={t.id}
-              className="rounded-2xl border border-zinc-800 bg-zinc-900 overflow-hidden"
-            >
-              {/* Card header */}
-              <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-zinc-800">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 shadow-md">
-                    <CreditCard className="h-5 w-5 text-white" />
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {tarjetas.map((t) => {
+            const dte = daysUntil(t.vencimiento);
+            const dteTone =
+              dte < 0 ? 'text-neg'
+              : dte <= 7 ? 'text-warn'
+              : dte <= 15 ? 'text-warn'
+              : 'text-pos';
+            const cuotasTotal = t.cuotasAVencer.reduce((s, c) => s + Number(c.total), 0);
+            return (
+              <article
+                key={t.id}
+                className="border border-rule rounded-lg bg-paper-lifted overflow-hidden"
+              >
+                {/* Header */}
+                <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-rule-soft">
+                  <div className="min-w-0">
+                    <p className="eyebrow">{t.banco}</p>
+                    <h3 className="serif text-[18px] font-medium text-ink mt-1 truncate tracking-tight">
+                      {t.nombre}
+                    </h3>
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-zinc-100 leading-tight">{t.nombre}</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">{t.banco}</p>
-                  </div>
+                  {deleteId === t.id ? (
+                    <div className="flex gap-2 items-center shrink-0 ml-3">
+                      <button
+                        className="text-[12px] text-neg font-medium"
+                        onClick={() => handleDelete(t.id)}
+                      >
+                        Confirmar
+                      </button>
+                      <button
+                        className="text-[12px] text-ink-mute hover:text-ink"
+                        onClick={() => setDeleteId(null)}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="text-[12px] text-ink-mute hover:text-neg transition-colors shrink-0 ml-3"
+                      onClick={() => setDeleteId(t.id)}
+                    >
+                      Eliminar
+                    </button>
+                  )}
                 </div>
-                {deleteId === t.id ? (
-                  <div className="flex gap-1.5 items-center">
-                    <button
-                      className="text-xs text-red-400 hover:text-red-300 bg-red-500/10 rounded-lg px-2.5 py-1.5 transition-colors"
-                      onClick={() => handleDelete(t.id)}
-                    >
-                      Confirmar
-                    </button>
-                    <button
-                      className="text-xs text-zinc-500 hover:text-zinc-300 bg-zinc-800 rounded-lg px-2.5 py-1.5 transition-colors"
-                      onClick={() => setDeleteId(null)}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    className="text-zinc-600 hover:text-red-400 hover:bg-red-500/10 p-1.5 rounded-lg transition-colors"
-                    onClick={() => setDeleteId(t.id)}
-                    aria-label="Eliminar"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
 
-              {/* Saldos */}
-              <div className="px-5 py-4 space-y-3">
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-zinc-600 mb-1">Saldo actual</p>
-                  <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-red-400 tracking-tight">
-                    {formatMoney(Number(t.saldoActual))}
-                  </p>
-                </div>
-                {t.saldoDolares != null && Number(t.saldoDolares) > 0 && (
+                {/* Saldo principal */}
+                <div className="px-5 py-5 grid grid-cols-2 gap-5 border-b border-rule-soft">
                   <div>
-                    <p className="text-xs uppercase tracking-wide text-zinc-600 mb-0.5">Saldo en dólares</p>
-                    <p className="text-base font-[family-name:var(--font-mono)] font-semibold text-amber-400">
-                      {formatMoneyUSD(Number(t.saldoDolares))}
+                    <p className="eyebrow">Saldo en pesos</p>
+                    <p className="mt-1.5 font-mono text-[26px] leading-none tracking-tight text-neg">
+                      <span className="peso">$</span>
+                      {fmtNum(Number(t.saldoActual))}
                     </p>
                   </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4 pt-1">
                   <div>
-                    <p className="text-xs uppercase tracking-wide text-zinc-600 mb-1">Vencimiento</p>
-                    <VencimientoBadge vencimiento={t.vencimiento} />
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-zinc-600 mb-1">Pago mínimo</p>
-                    <p className="text-sm font-[family-name:var(--font-mono)] font-semibold text-zinc-300">
-                      {formatMoney(Number(t.pagoMinimo))}
+                    <p className="eyebrow">Saldo en dólares</p>
+                    <p className="mt-1.5 font-mono text-[26px] leading-none tracking-tight text-ink">
+                      {t.saldoDolares != null && Number(t.saldoDolares) > 0 ? (
+                        <>
+                          <span className="peso">US$</span>
+                          {fmtNum(Number(t.saldoDolares))}
+                        </>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
                     </p>
                   </div>
                 </div>
 
-                {t.cierreActual && (
-                  <p className="text-xs text-zinc-600">
-                    Cierre:{' '}
-                    <span className="text-zinc-500">
-                      {formatearFecha(t.cierreActual + 'T00:00:00')}
-                    </span>
-                  </p>
-                )}
-              </div>
+                {/* Meta row */}
+                <div className="px-5 py-4 grid grid-cols-3 gap-4 border-b border-rule-soft">
+                  <div>
+                    <p className="eyebrow">Vencimiento</p>
+                    <p className="mt-1 font-mono text-[13px] text-ink">
+                      {fmtDate(t.vencimiento + 'T00:00:00')}
+                    </p>
+                    <p className={`mt-0.5 text-[11.5px] ${dteTone}`}>
+                      {dte >= 0 ? `en ${dte} días` : `vencida hace ${Math.abs(dte)}d`}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="eyebrow">Pago mínimo</p>
+                    <p className="mt-1 font-mono text-[13px] text-ink">
+                      <span className="peso">$</span>
+                      {fmtNum(Number(t.pagoMinimo))}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="eyebrow">Cierre</p>
+                    <p className="mt-1 font-mono text-[13px] text-ink-soft">
+                      {t.cierreActual ? fmtDate(t.cierreActual + 'T00:00:00') : '—'}
+                    </p>
+                  </div>
+                </div>
 
-              {/* Cuotas */}
-              {t.cuotasAVencer.length > 0 && (
-                <div className="border-t border-zinc-800">
-                  <p className="text-xs uppercase tracking-wide text-zinc-600 px-5 pt-3 pb-1.5">
-                    Cuotas a vencer
-                  </p>
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-zinc-800/50 hover:bg-zinc-800/50 border-b border-zinc-800">
-                        <TableHead className={TH + ' pl-5'}>Mes</TableHead>
-                        <TableHead className={TH + ' text-right pr-5'}>Total</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {t.cuotasAVencer.map((c, i) => (
-                        <TableRow
+                {/* Cuotas */}
+                {t.cuotasAVencer.length > 0 && (
+                  <div className="px-5 py-4 border-b border-rule-soft">
+                    <div className="flex items-baseline justify-between mb-2.5">
+                      <p className="eyebrow">Cuotas a vencer</p>
+                      <p className="text-[12px] text-ink-mute font-mono">
+                        {t.cuotasAVencer.length} · {fmtARS(cuotasTotal)}
+                      </p>
+                    </div>
+                    <ul className="divide-y divide-rule-soft">
+                      {t.cuotasAVencer.map((c) => (
+                        <li
                           key={c.mes}
-                          className={`border-b border-zinc-800/40 hover:bg-zinc-800/40 transition-colors
-                            ${i % 2 === 0 ? 'bg-zinc-900' : 'bg-zinc-950/50'}`}
+                          className="flex items-center justify-between py-2 text-[13px]"
                         >
-                          <TableCell className="text-sm text-zinc-400 capitalize py-2 pl-5">
-                            {formatMes(c.mes)}
-                          </TableCell>
-                          <TableCell className="text-right font-[family-name:var(--font-mono)] text-sm font-semibold text-zinc-200 py-2 pr-5">
-                            {formatMoney(c.total)}
-                          </TableCell>
-                        </TableRow>
+                          <span className="text-ink-soft capitalize">{fmtMes(c.mes)}</span>
+                          <span className="font-mono text-ink">
+                            <span className="peso">$</span>
+                            {fmtNum(c.total)}
+                          </span>
+                        </li>
                       ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
+                    </ul>
+                  </div>
+                )}
 
-              <div className="px-5 py-2.5 border-t border-zinc-800">
-                <p className="text-xs text-zinc-700">
-                  Importado: {formatearFecha(t.fechaImportacion)}
-                </p>
-              </div>
-            </div>
-          ))}
+                <div className="px-5 py-3 bg-paper-deep">
+                  <span className="text-[11.5px] text-ink-faint">
+                    Importado el {fmtDate(t.fechaImportacion)}
+                  </span>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 
-      {/* Import Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(open) => {
-        if (step === 'loading' || step === 'saving') return;
-        setDialogOpen(open);
-      }}>
-        <DialogContent className="bg-zinc-900 border border-zinc-700 ring-0 text-zinc-100 sm:max-w-lg">
+      {/* Import dialog */}
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          if (step === 'loading' || step === 'saving') return;
+          setDialogOpen(open);
+        }}
+      >
+        <DialogContent className="bg-paper-lifted border border-rule rounded-lg lift text-ink sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-zinc-100 text-base font-semibold flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-blue-400" />
-              Importar resumen con IA
+            <DialogTitle className="serif text-[18px] font-medium text-ink tracking-tight">
+              Importar resumen
             </DialogTitle>
+            <p className="text-[12.5px] text-ink-mute mt-0.5">
+              Subí el PDF de tu resumen de tarjeta y la IA extrae los datos.
+            </p>
           </DialogHeader>
 
           {step === 'input' && (
-            <div className="space-y-4 mt-1">
-              {/* Hidden file input */}
+            <div className="space-y-4 mt-2">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -408,69 +372,57 @@ export default function TarjetasPage() {
                 onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
               />
 
-              {/* Dropzone */}
               {pdfFile ? (
-                <div className="flex items-center justify-between rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3.5">
+                <div className="flex items-center justify-between border border-rule bg-paper-deep px-4 py-3 rounded-md">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/15">
-                      <FileText className="h-4 w-4 text-blue-400" />
-                    </div>
+                    <span className="eyebrow">PDF</span>
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-zinc-200 truncate">{pdfFile.name}</p>
-                      <p className="text-xs text-zinc-500 mt-0.5">
+                      <p className="text-[13px] text-ink truncate">{pdfFile.name}</p>
+                      <p className="font-mono text-[11px] text-ink-mute mt-0.5">
                         {(pdfFile.size / 1024).toFixed(0)} KB
                       </p>
                     </div>
                   </div>
                   <button
-                    onClick={() => { setPdfFile(null); setImportError(''); }}
-                    className="ml-3 shrink-0 rounded-md p-1.5 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300 transition-colors"
-                    aria-label="Quitar archivo"
+                    onClick={() => {
+                      setPdfFile(null);
+                      setImportError('');
+                    }}
+                    className="text-[12px] text-ink-mute hover:text-neg ml-3"
                   >
-                    <X className="h-4 w-4" />
+                    Quitar
                   </button>
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
                   onDragLeave={() => setIsDragging(false)}
                   onDrop={handleDrop}
-                  className={`w-full rounded-xl border-2 border-dashed px-6 py-10 text-center transition-all duration-150 focus:outline-none
-                    ${isDragging
-                      ? 'border-blue-500 bg-blue-500/8'
-                      : 'border-zinc-600 bg-zinc-800 hover:bg-zinc-700 hover:border-zinc-500'
-                    }`}
+                  className={`w-full border border-dashed px-6 py-12 text-center transition-colors rounded-md
+                    ${isDragging ? 'border-teal bg-teal-bg' : 'border-edge hover:border-ink-faint bg-paper-deep/40'}`}
                 >
-                  <div className="flex flex-col items-center gap-3 pointer-events-none">
-                    <div className={`flex h-12 w-12 items-center justify-center rounded-xl transition-colors
-                      ${isDragging ? 'bg-blue-500/20' : 'bg-zinc-700'}`}
-                    >
-                      <Upload className={`h-6 w-6 transition-colors ${isDragging ? 'text-blue-400' : 'text-zinc-400'}`} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-zinc-300">
-                        Arrastrá tu resumen PDF acá
-                      </p>
-                      <p className="text-xs text-zinc-500 mt-1">
-                        o hacé click para seleccionar
-                      </p>
-                    </div>
-                    <p className="text-xs text-zinc-600">PDF · máx. 10 MB</p>
-                  </div>
+                  <p className="text-[13px] text-ink">
+                    Arrastrá el PDF acá <span className="text-ink-mute">o</span>{' '}
+                    <span className="text-teal underline underline-offset-2">elegí un archivo</span>
+                  </p>
+                  <p className="mt-1.5 text-[11.5px] text-ink-faint">PDF · hasta 10 MB</p>
                 </button>
               )}
 
               {importError && (
-                <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-400">
-                  {importError}
+                <div className="px-3 py-2.5 bg-neg-bg border-l-2 border-neg rounded-r-sm">
+                  <span className="text-[12.5px] text-neg">{importError}</span>
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-1">
+              <div className="flex justify-end gap-2 pt-3 border-t border-rule">
                 <button
-                  className="rounded-lg px-4 py-2 text-sm font-medium bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors"
+                  className="h-9 px-3.5 text-[13px] text-ink-mute hover:text-ink transition-colors"
                   onClick={() => setDialogOpen(false)}
                 >
                   Cancelar
@@ -478,120 +430,123 @@ export default function TarjetasPage() {
                 <button
                   onClick={handleAnalizar}
                   disabled={!pdfFile}
-                  className="rounded-lg px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="h-9 px-4 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md disabled:opacity-50 transition-colors"
                 >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Analizar con IA
+                  Analizar PDF
                 </button>
               </div>
             </div>
           )}
 
           {step === 'loading' && (
-            <div className="flex flex-col items-center justify-center py-12 gap-4">
-              <div className="relative">
-                <div className="h-12 w-12 rounded-full border-2 border-zinc-700" />
-                <div className="absolute inset-0 h-12 w-12 rounded-full border-2 border-t-blue-500 animate-spin" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-zinc-300">Analizando con Claude...</p>
-                <p className="text-xs text-zinc-600 mt-1">Puede tardar unos segundos</p>
-              </div>
+            <div className="py-14 flex flex-col items-center gap-3">
+              <span className="h-2 w-2 rounded-full bg-teal animate-pulse" />
+              <p className="serif text-[15px] text-ink">Analizando con Claude…</p>
+              <p className="text-[12px] text-ink-mute">Tarda 5 a 10 segundos.</p>
             </div>
           )}
 
           {step === 'preview' && preview && (
-            <div className="space-y-4 mt-1">
-              <div className="rounded-xl bg-green-500/8 border border-green-500/15 px-3.5 py-2.5 text-sm text-green-300 flex items-center gap-2">
-                <CheckCircle className="h-4 w-4 shrink-0" />
-                Datos extraídos correctamente. Revisalos antes de guardar.
+            <div className="space-y-4 mt-2">
+              <div className="px-3 py-2.5 bg-pos-bg border-l-2 border-pos rounded-r-sm">
+                <span className="text-[12.5px] text-pos">
+                  Datos extraídos. Revisalos antes de guardar.
+                </span>
               </div>
 
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
-                <div className="grid grid-cols-2 divide-x divide-zinc-800">
-                  <div className="p-3 space-y-0.5">
-                    <p className="text-xs text-zinc-600">Nombre</p>
-                    <p className="text-sm font-medium text-zinc-200">{preview.nombre}</p>
-                  </div>
-                  <div className="p-3 space-y-0.5">
-                    <p className="text-xs text-zinc-600">Banco</p>
-                    <p className="text-sm font-medium text-zinc-200">{preview.banco}</p>
-                  </div>
-                </div>
-                <div className="border-t border-zinc-800 grid grid-cols-2 divide-x divide-zinc-800">
-                  <div className="p-3 space-y-0.5">
-                    <p className="text-xs text-zinc-600">Saldo actual</p>
-                    <p className="text-sm font-bold font-[family-name:var(--font-mono)] text-red-400">
-                      {formatMoney(preview.saldoActual)}
-                    </p>
-                  </div>
-                  <div className="p-3 space-y-0.5">
-                    <p className="text-xs text-zinc-600">Vencimiento</p>
-                    <p className="text-sm font-medium text-zinc-200">{preview.vencimiento}</p>
-                  </div>
-                </div>
-                <div className="border-t border-zinc-800 grid grid-cols-2 divide-x divide-zinc-800">
-                  <div className="p-3 space-y-0.5">
-                    <p className="text-xs text-zinc-600">Pago mínimo</p>
-                    <p className="text-sm font-[family-name:var(--font-mono)] font-medium text-zinc-300">
-                      {formatMoney(preview.pagoMinimo)}
-                    </p>
-                  </div>
-                  <div className="p-3 space-y-0.5">
-                    <p className="text-xs text-zinc-600">Saldo USD</p>
-                    <p className="text-sm font-[family-name:var(--font-mono)] text-zinc-400">
-                      {preview.saldoDolares != null ? formatMoneyUSD(preview.saldoDolares) : '—'}
-                    </p>
-                  </div>
-                </div>
+              <div className="border border-rule rounded-md divide-y divide-rule-soft">
+                <PreviewRow k="Nombre" v={preview.nombre} />
+                <PreviewRow k="Banco" v={preview.banco} />
+                <PreviewRow k="Saldo en pesos" v={fmtARS(preview.saldoActual)} mono tone="neg" />
+                <PreviewRow k="Vencimiento" v={preview.vencimiento} mono />
+                <PreviewRow k="Pago mínimo" v={fmtARS(preview.pagoMinimo)} mono />
+                <PreviewRow
+                  k="Saldo en dólares"
+                  v={preview.saldoDolares != null ? fmtUSD(preview.saldoDolares) : '—'}
+                  mono
+                />
                 {preview.cuotasAVencer.length > 0 && (
-                  <div className="border-t border-zinc-800 p-3">
-                    <p className="text-xs text-zinc-600 mb-2">
-                      Cuotas a vencer ({preview.cuotasAVencer.length})
-                    </p>
-                    <div className="space-y-1">
+                  <div className="px-3 py-2.5">
+                    <span className="eyebrow block mb-1.5">
+                      Cuotas a vencer · {preview.cuotasAVencer.length}
+                    </span>
+                    <ul className="divide-y divide-rule-soft">
                       {preview.cuotasAVencer.map((c) => (
-                        <div key={c.mes} className="flex justify-between text-xs">
-                          <span className="text-zinc-400 capitalize">{formatMes(c.mes)}</span>
-                          <span className="font-[family-name:var(--font-mono)] text-zinc-300">{formatMoney(c.total)}</span>
-                        </div>
+                        <li
+                          key={c.mes}
+                          className="flex justify-between py-1.5 text-[12.5px]"
+                        >
+                          <span className="text-ink-soft capitalize">{fmtMes(c.mes)}</span>
+                          <span className="font-mono text-ink">
+                            <span className="peso">$</span>
+                            {fmtNum(c.total)}
+                          </span>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   </div>
                 )}
               </div>
 
               {importError && (
-                <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-400">
-                  {importError}
+                <div className="px-3 py-2.5 bg-neg-bg border-l-2 border-neg rounded-r-sm">
+                  <span className="text-[12.5px] text-neg">{importError}</span>
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-1">
+              <div className="flex justify-end gap-2 pt-3 border-t border-rule">
                 <button
-                  className="rounded-lg px-4 py-2 text-sm font-medium bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors"
+                  className="h-9 px-3.5 text-[13px] text-ink-mute hover:text-ink transition-colors"
                   onClick={() => setStep('input')}
                 >
                   ← Volver
                 </button>
                 <button
                   onClick={handleConfirmar}
-                  className="rounded-lg px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-500/20 transition-colors"
+                  className="h-9 px-4 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md transition-colors"
                 >
-                  Confirmar y guardar
+                  Guardar resumen
                 </button>
               </div>
             </div>
           )}
 
           {step === 'saving' && (
-            <div className="flex flex-col items-center justify-center py-10 gap-3">
-              <div className="h-8 w-8 rounded-full border-2 border-t-blue-500 animate-spin" />
-              <p className="text-sm text-zinc-400">Guardando...</p>
+            <div className="py-12 flex flex-col items-center gap-3">
+              <span className="h-2 w-2 rounded-full bg-teal animate-pulse" />
+              <p className="serif text-[15px] text-ink">Guardando…</p>
             </div>
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function PreviewRow({
+  k,
+  v,
+  mono,
+  tone,
+}: {
+  k: string;
+  v: string;
+  mono?: boolean;
+  tone?: 'neg' | 'pos' | 'warn' | 'ink';
+}) {
+  const toneClass =
+    tone === 'neg' ? 'text-neg'
+    : tone === 'pos' ? 'text-pos'
+    : tone === 'warn' ? 'text-warn'
+    : 'text-ink';
+  return (
+    <div className="grid grid-cols-2 px-3 py-2.5">
+      <span className="eyebrow self-center">{k}</span>
+      <span
+        className={`text-right text-[13px] ${mono ? 'font-mono' : ''} ${toneClass}`}
+      >
+        {v}
+      </span>
     </div>
   );
 }

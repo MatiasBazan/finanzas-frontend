@@ -2,26 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Plus, TrendingDown } from 'lucide-react';
 
 interface Deuda {
   id: number;
@@ -52,7 +39,11 @@ const EMPTY_FORM: DeudaForm = {
   fechaVencimiento: '',
 };
 
-function formatMoney(n: number) {
+function fmtNum(n: number) {
+  return new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(n);
+}
+
+function fmtARS(n: number) {
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
@@ -60,30 +51,36 @@ function formatMoney(n: number) {
   }).format(n);
 }
 
-function formatearFecha(fecha: string | Date | null | undefined): string {
-  if (!fecha) return 'Sin fecha';
+function fmtDate(fecha: string | Date | null | undefined): string {
+  if (!fecha) return '—';
   const d = new Date(fecha);
-  if (isNaN(d.getTime())) return 'Sin fecha';
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('es-AR', {
     day: '2-digit',
-    month: '2-digit',
+    month: 'short',
     year: 'numeric',
   });
 }
 
-function formatMes(mes: string) {
-  const [year, month] = mes.split('-');
-  const date = new Date(Number(year), Number(month) - 1);
-  return date.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+function fmtMes(mes: string) {
+  const [y, m] = mes.split('-');
+  return new Date(Number(y), Number(m) - 1).toLocaleDateString('es-AR', {
+    month: 'long',
+    year: 'numeric',
+  });
 }
 
-function estadoBadgeClass(estado: string) {
-  if (estado === 'pendiente') return 'bg-amber-500/15 text-amber-400 border-amber-500/25';
-  if (estado === 'pagada') return 'bg-green-500/15 text-green-400 border-green-500/25';
-  return 'bg-zinc-700/50 text-zinc-400 border-zinc-600/50';
+function daysUntil(date: string | undefined) {
+  if (!date) return null;
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return Math.ceil((d.getTime() - now.getTime()) / 86_400_000);
 }
 
-const INPUT_CLS = 'bg-zinc-800 border-zinc-700 text-zinc-100 placeholder:text-zinc-600 focus-visible:border-blue-500 focus-visible:ring-blue-500/20 h-9';
+const INPUT_CLS =
+  'h-9 bg-paper-deep border border-edge rounded-md text-ink placeholder:text-ink-faint text-[13px] px-3 focus-visible:border-teal focus-visible:ring-2 focus-visible:ring-teal/15';
 
 export default function DeudasPage() {
   const [deudas, setDeudas] = useState<Deuda[]>([]);
@@ -98,15 +95,22 @@ export default function DeudasPage() {
 
   async function fetchAll() {
     try {
-      const [d, p] = await Promise.all([api.get('/deudas'), api.get('/deudas/proyeccion')]);
+      const [d, p] = await Promise.all([
+        api.get('/deudas'),
+        api.get('/deudas/proyeccion'),
+      ]);
       setDeudas(d);
       setProyeccion(p);
-    } catch { /* ignore */ } finally {
+    } catch {
+      /* ignore */
+    } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => {
+    fetchAll();
+  }, []);
 
   function openCreate() {
     setEditingDeuda(null);
@@ -138,16 +142,13 @@ export default function DeudasPage() {
         cantidadCuotas: Number(form.cantidadCuotas),
         ...(form.fechaVencimiento ? { fechaVencimiento: form.fechaVencimiento } : {}),
       };
-      if (editingDeuda) {
-        await api.patch(`/deudas/${editingDeuda.id}`, body);
-      } else {
-        await api.post('/deudas', body);
-      }
+      if (editingDeuda) await api.patch(`/deudas/${editingDeuda.id}`, body);
+      else await api.post('/deudas', body);
       setDialogOpen(false);
       setLoading(true);
       await fetchAll();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Error al guardar.');
+      setFormError(err instanceof Error ? err.message : 'No se pudo guardar.');
     } finally {
       setSaving(false);
     }
@@ -157,7 +158,9 @@ export default function DeudasPage() {
     try {
       await api.delete(`/deudas/${id}`);
       setDeudas((prev) => prev.filter((d) => d.id !== id));
-    } catch { /* ignore */ } finally {
+    } catch {
+      /* ignore */
+    } finally {
       setDeleteId(null);
     }
   }
@@ -166,108 +169,125 @@ export default function DeudasPage() {
     proyeccion.length > 0
       ? proyeccion.reduce((s, p) => s + p.total, 0) / proyeccion.length
       : 0;
-
-  const TH = 'text-xs uppercase tracking-widest text-zinc-500 font-medium py-3';
+  const maxProyeccion = Math.max(...proyeccion.map((p) => p.total), 0);
 
   return (
-    <div className="space-y-6">
+    <div className="px-5 lg:px-8 py-7 max-w-7xl">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-rule">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Deudas</h1>
-          <p className="text-sm text-zinc-500 mt-0.5">
-            {loading ? '...' : `${deudas.length} deuda${deudas.length !== 1 ? 's' : ''} registrada${deudas.length !== 1 ? 's' : ''}`}
+          <p className="eyebrow">Posiciones de deuda</p>
+          <p className="mt-1 text-[13px] text-ink-mute">
+            {loading
+              ? 'Cargando…'
+              : `${deudas.length} ${deudas.length === 1 ? 'deuda registrada' : 'deudas registradas'}`}
           </p>
         </div>
-        <Button
+        <button
           onClick={openCreate}
-          className="bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 gap-1.5"
+          className="h-9 px-3.5 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md transition-colors"
         >
-          <Plus className="h-4 w-4" /> Nueva deuda
-        </Button>
+          + Nueva deuda
+        </button>
       </div>
 
-      {/* Deudas table */}
-      <div className="rounded-2xl border border-zinc-800 overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-zinc-800/80 hover:bg-zinc-800/80 border-b border-zinc-700">
-              <TableHead className={TH}>Descripción</TableHead>
-              <TableHead className={`${TH} text-right`}>Total</TableHead>
-              <TableHead className={TH}>Cuotas</TableHead>
-              <TableHead className={`${TH} text-right`}>Por cuota</TableHead>
-              <TableHead className={TH}>Estado</TableHead>
-              <TableHead className={TH}>Vencimiento</TableHead>
-              <TableHead className="w-32 py-3" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      {/* Table */}
+      <div className="mt-5 border border-rule rounded-lg bg-paper-lifted overflow-hidden">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="bg-paper-deep border-b border-rule">
+              <th className="eyebrow text-left py-2.5 px-5 font-medium">Descripción</th>
+              <th className="eyebrow text-right py-2.5 px-3 font-medium">Total</th>
+              <th className="eyebrow text-left py-2.5 px-3 font-medium">Cuotas</th>
+              <th className="eyebrow text-right py-2.5 px-3 font-medium">Por cuota</th>
+              <th className="eyebrow text-left py-2.5 px-3 font-medium">Estado</th>
+              <th className="eyebrow text-left py-2.5 px-3 font-medium">Vencimiento</th>
+              <th className="py-2.5 px-5 w-32" />
+            </tr>
+          </thead>
+          <tbody>
             {loading ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <TableRow key={i} className="border-b border-zinc-800/60">
+              Array.from({ length: 4 }).map((_, i) => (
+                <tr key={i} className="border-b border-rule-soft">
                   {Array.from({ length: 7 }).map((__, j) => (
-                    <TableCell key={j} className="py-3">
-                      <Skeleton className="h-4 w-full bg-zinc-800" />
-                    </TableCell>
+                    <td key={j} className="py-3 px-3">
+                      <div className="h-3 bg-paper-deep animate-pulse rounded-sm" />
+                    </td>
                   ))}
-                </TableRow>
+                </tr>
               ))
             ) : deudas.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center py-12 text-zinc-600 text-sm">
-                  Sin deudas registradas
-                </TableCell>
-              </TableRow>
+              <tr>
+                <td colSpan={7} className="py-14 text-center">
+                  <span className="text-[13px] text-ink-faint">
+                    Aún no hay deudas registradas
+                  </span>
+                </td>
+              </tr>
             ) : (
-              deudas.map((d, idx) => {
-                const cuotasPagadas = d.cuotasPagadas ?? 0;
-                const progreso = Math.round((cuotasPagadas / d.cantidadCuotas) * 100);
-                const montoCuota = d.montoTotal / d.cantidadCuotas;
-
+              deudas.map((d) => {
+                const pagadas = d.cuotasPagadas ?? 0;
+                const progreso = d.cantidadCuotas > 0 ? (pagadas / d.cantidadCuotas) * 100 : 0;
+                const montoCuota = d.cantidadCuotas > 0 ? d.montoTotal / d.cantidadCuotas : 0;
+                const dte = daysUntil(d.fechaVencimiento);
+                const dteTone =
+                  dte === null ? 'text-ink-faint'
+                  : dte < 0 ? 'text-neg'
+                  : dte <= 7 ? 'text-warn'
+                  : 'text-ink-mute';
+                const stateColor =
+                  d.estado === 'pagada' ? 'text-pos' :
+                  d.estado === 'pendiente' ? 'text-warn' : 'text-ink-mute';
                 return (
-                  <TableRow
+                  <tr
                     key={d.id}
-                    className={`border-b border-zinc-800/60 transition-colors hover:bg-zinc-800/50
-                      ${idx % 2 === 0 ? 'bg-zinc-900' : 'bg-zinc-950'}`}
+                    className="border-b border-rule-soft last:border-b-0 hover:bg-paper-deep/40 group transition-colors"
                   >
-                    <TableCell className="py-3">
-                      <div className="space-y-1.5">
-                        <span className="font-medium text-zinc-200 text-sm">{d.descripcion}</span>
-                        <div className="flex items-center gap-2">
-                          <Progress
-                            value={progreso}
-                            className="h-1.5 w-28 bg-zinc-700"
+                    <td className="py-3.5 px-5">
+                      <div className="text-ink truncate max-w-[280px]">{d.descripcion}</div>
+                      <div className="flex items-center gap-2.5 mt-1.5">
+                        <div className="w-28 h-1 bg-paper-deep rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-pos rounded-full"
+                            style={{ width: `${progreso}%` }}
                           />
-                          <span className="text-xs text-zinc-600">{progreso}%</span>
                         </div>
+                        <span className="font-mono text-[11px] text-ink-mute">
+                          {progreso.toFixed(0)}%
+                        </span>
                       </div>
-                    </TableCell>
-                    <TableCell className="text-right font-[family-name:var(--font-mono)] text-sm font-semibold text-zinc-200 py-3">
-                      {formatMoney(Number(d.montoTotal))}
-                    </TableCell>
-                    <TableCell className="text-sm text-zinc-400 py-3">
-                      {cuotasPagadas}/{d.cantidadCuotas}
-                    </TableCell>
-                    <TableCell className="text-right font-[family-name:var(--font-mono)] text-sm text-zinc-400 py-3">
-                      {formatMoney(montoCuota)}
-                    </TableCell>
-                    <TableCell className="py-3">
-                      <Badge
-                        variant="outline"
-                        className={`text-xs font-medium border ${estadoBadgeClass(d.estado)}`}
-                      >
+                    </td>
+                    <td className="py-3.5 px-3 text-right font-mono text-ink">
+                      <span className="peso">$</span>
+                      {fmtNum(Number(d.montoTotal))}
+                    </td>
+                    <td className="py-3.5 px-3 font-mono text-ink-soft">
+                      {pagadas}/{d.cantidadCuotas}
+                    </td>
+                    <td className="py-3.5 px-3 text-right font-mono text-ink-soft">
+                      <span className="peso">$</span>
+                      {fmtNum(montoCuota)}
+                    </td>
+                    <td className={`py-3.5 px-3 ${stateColor} text-[12px] capitalize`}>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={`h-1.5 w-1.5 rounded-full ${stateColor === 'text-pos' ? 'bg-pos' : stateColor === 'text-warn' ? 'bg-warn' : 'bg-ink-mute'}`} />
                         {d.estado}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-zinc-500 py-3">
-                      {d.fechaVencimiento
-                        ? formatearFecha(d.fechaVencimiento)
-                        : <span className="text-zinc-700">—</span>}
-                    </TableCell>
-                    <TableCell className="py-3">
-                      <div className="flex gap-1 justify-end">
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-3">
+                      <div className="font-mono text-[12px] text-ink-mute">
+                        {fmtDate(d.fechaVencimiento)}
+                      </div>
+                      {dte !== null && (
+                        <div className={`font-mono text-[11px] ${dteTone}`}>
+                          {dte >= 0 ? `en ${dte}d` : `vencida hace ${Math.abs(dte)}d`}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-3.5 px-5">
+                      <div className="flex gap-3 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                          className="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
+                          className="text-[12px] text-ink-mute hover:text-teal transition-colors"
                           onClick={() => openEdit(d)}
                         >
                           Editar
@@ -275,145 +295,125 @@ export default function DeudasPage() {
                         {deleteId === d.id ? (
                           <>
                             <button
-                              className="rounded-md px-2 py-1 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+                              className="text-[12px] text-neg font-medium"
                               onClick={() => handleDelete(d.id)}
                             >
                               Confirmar
                             </button>
                             <button
-                              className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-700 transition-colors"
+                              className="text-[12px] text-ink-mute hover:text-ink"
                               onClick={() => setDeleteId(null)}
                             >
-                              ✕
+                              Cancelar
                             </button>
                           </>
                         ) : (
                           <button
-                            className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                            className="text-[12px] text-ink-mute hover:text-neg transition-colors"
                             onClick={() => setDeleteId(d.id)}
                           >
                             Eliminar
                           </button>
                         )}
                       </div>
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 );
               })
             )}
-          </TableBody>
-        </Table>
+          </tbody>
+        </table>
       </div>
 
-      {/* Proyección 12 meses */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <TrendingDown className="h-4 w-4 text-red-400" />
-          <h2 className="text-sm font-semibold text-zinc-300">Proyección próximos 12 meses</h2>
+      {/* Proyección */}
+      <div className="mt-10 pt-7 border-t border-rule">
+        <div className="flex items-baseline justify-between">
+          <h2 className="serif text-[17px] font-medium text-ink tracking-tight">
+            Proyección a 12 meses
+          </h2>
           {!loading && avgProyeccion > 0 && (
-            <span className="text-xs text-zinc-600">
-              · promedio {formatMoney(avgProyeccion)}
+            <span className="text-[12px] text-ink-mute">
+              Promedio mensual {fmtARS(avgProyeccion)}
             </span>
           )}
         </div>
 
         {loading ? (
-          <Skeleton className="h-48 rounded-2xl bg-zinc-800" />
-        ) : (
-          <div className="rounded-2xl border border-zinc-800 overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-zinc-800/80 hover:bg-zinc-800/80 border-b border-zinc-700">
-                  <TableHead className={TH}>Mes</TableHead>
-                  <TableHead className={`${TH} text-right`}>Total a pagar</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {proyeccion.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={2} className="text-center py-8 text-zinc-600 text-sm">
-                      Sin proyección disponible
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  proyeccion.map((p, idx) => {
-                    const isHigh = p.total > avgProyeccion;
-                    return (
-                      <TableRow
-                        key={p.mes}
-                        className={`border-b border-zinc-800/60 transition-colors
-                          ${isHigh ? 'bg-red-500/5 hover:bg-red-500/8' : idx % 2 === 0 ? 'bg-zinc-900 hover:bg-zinc-800/50' : 'bg-zinc-950 hover:bg-zinc-800/50'}`}
-                      >
-                        <TableCell className="text-sm text-zinc-300 capitalize py-3">
-                          {formatMes(p.mes)}
-                        </TableCell>
-                        <TableCell className="text-right py-3">
-                          <span className={`font-[family-name:var(--font-mono)] text-sm font-semibold ${isHigh ? 'text-red-400' : 'text-zinc-200'}`}>
-                            {formatMoney(p.total)}
-                          </span>
-                          {isHigh && (
-                            <span className="ml-2 text-xs font-medium text-red-500 bg-red-500/10 rounded px-1.5 py-0.5">
-                              ↑ alto
-                            </span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
+          <div className="mt-5 space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-7 bg-paper-deep animate-pulse rounded-sm" />
+            ))}
           </div>
+        ) : proyeccion.length === 0 ? (
+          <div className="py-12 text-center">
+            <span className="text-[13px] text-ink-faint">Sin proyección disponible</span>
+          </div>
+        ) : (
+          <ul className="mt-5 divide-y divide-rule-soft">
+            {proyeccion.map((p) => {
+              const isHigh = p.total > avgProyeccion;
+              const w = maxProyeccion > 0 ? (p.total / maxProyeccion) * 100 : 0;
+              return (
+                <li
+                  key={p.mes}
+                  className="grid grid-cols-[140px_1fr_140px_70px] items-center gap-4 py-2.5"
+                >
+                  <span className="text-[13px] text-ink-soft capitalize">{fmtMes(p.mes)}</span>
+                  <div className="h-1.5 bg-paper-deep rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${isHigh ? 'bg-warn' : 'bg-teal'}`}
+                      style={{ width: `${w.toFixed(1)}%` }}
+                    />
+                  </div>
+                  <span className={`font-mono text-[13px] text-right ${isHigh ? 'text-warn' : 'text-ink'}`}>
+                    <span className="peso">$</span>
+                    {fmtNum(p.total)}
+                  </span>
+                  <span className={`text-[11px] text-right ${isHigh ? 'text-warn' : 'text-ink-faint'}`}>
+                    {isHigh ? 'sobre promedio' : ''}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
 
       {/* Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-zinc-900 border border-zinc-700 ring-0 text-zinc-100 sm:max-w-md">
+        <DialogContent className="bg-paper-lifted border border-rule rounded-lg lift text-ink sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-zinc-100 text-base font-semibold">
+            <DialogTitle className="serif text-[18px] font-medium text-ink tracking-tight">
               {editingDeuda ? 'Editar deuda' : 'Nueva deuda'}
             </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSave} className="space-y-4 mt-1">
-            <div className="space-y-1.5">
-              <label className="text-xs uppercase tracking-wide text-zinc-500 font-medium" htmlFor="descripcion">
-                Descripción
-              </label>
+          <form onSubmit={handleSave} className="space-y-4 mt-2">
+            <Field label="Descripción">
               <Input
-                id="descripcion"
                 type="text"
-                placeholder="Ej: Préstamo banco"
+                placeholder="Ej: Préstamo Banco"
                 value={form.descripcion}
                 onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
                 required
                 className={INPUT_CLS}
               />
-            </div>
+            </Field>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs uppercase tracking-wide text-zinc-500 font-medium" htmlFor="montoTotal">
-                  Monto total
-                </label>
+              <Field label="Monto total">
                 <Input
-                  id="montoTotal"
                   type="number"
                   min="0"
                   step="0.01"
-                  placeholder="0.00"
+                  placeholder="0"
                   value={form.montoTotal}
                   onChange={(e) => setForm({ ...form, montoTotal: e.target.value })}
                   required
-                  className={INPUT_CLS}
+                  className={`${INPUT_CLS} font-mono`}
                 />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs uppercase tracking-wide text-zinc-500 font-medium" htmlFor="cantidadCuotas">
-                  Cant. cuotas
-                </label>
+              </Field>
+              <Field label="Cuotas">
                 <Input
-                  id="cantidadCuotas"
                   type="number"
                   min="1"
                   step="1"
@@ -421,35 +421,30 @@ export default function DeudasPage() {
                   value={form.cantidadCuotas}
                   onChange={(e) => setForm({ ...form, cantidadCuotas: e.target.value })}
                   required
-                  className={INPUT_CLS}
+                  className={`${INPUT_CLS} font-mono`}
                 />
-              </div>
+              </Field>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs uppercase tracking-wide text-zinc-500 font-medium" htmlFor="fechaVencimiento">
-                Fecha de vencimiento{' '}
-                <span className="normal-case text-zinc-600">(opcional)</span>
-              </label>
+            <Field label="Vencimiento" hint="opcional">
               <Input
-                id="fechaVencimiento"
                 type="date"
                 value={form.fechaVencimiento}
                 onChange={(e) => setForm({ ...form, fechaVencimiento: e.target.value })}
-                className={INPUT_CLS}
+                className={`${INPUT_CLS} font-mono`}
               />
-            </div>
+            </Field>
 
             {formError && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-400">
-                {formError}
+              <div className="px-3 py-2.5 bg-neg-bg border-l-2 border-neg rounded-r-sm">
+                <span className="text-[12.5px] text-neg">{formError}</span>
               </div>
             )}
 
-            <div className="flex justify-end gap-2 pt-1">
+            <div className="flex justify-end gap-2 pt-3 border-t border-rule">
               <button
                 type="button"
-                className="rounded-lg px-4 py-2 text-sm font-medium bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors"
+                className="h-9 px-3.5 text-[13px] text-ink-mute hover:text-ink transition-colors"
                 onClick={() => setDialogOpen(false)}
               >
                 Cancelar
@@ -457,14 +452,34 @@ export default function DeudasPage() {
               <button
                 type="submit"
                 disabled={saving}
-                className="rounded-lg px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 transition-colors disabled:opacity-60"
+                className="h-9 px-4 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md disabled:opacity-50 transition-colors"
               >
-                {saving ? 'Guardando...' : editingDeuda ? 'Actualizar' : 'Crear deuda'}
+                {saving ? 'Guardando…' : editingDeuda ? 'Actualizar' : 'Guardar deuda'}
               </button>
             </div>
           </form>
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="flex items-baseline gap-2 mb-1.5">
+        <span className="text-[12px] text-ink-soft font-medium">{label}</span>
+        {hint && <span className="text-[11px] text-ink-faint">{hint}</span>}
+      </span>
+      {children}
+    </label>
   );
 }
