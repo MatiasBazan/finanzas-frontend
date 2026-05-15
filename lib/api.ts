@@ -1,7 +1,18 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
+export const AUTH_UNAUTHORIZED_EVENT = 'auth:unauthorized';
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = 'ApiError';
+  }
+}
+
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
-  const token = localStorage.getItem('token');
+  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
   const res = await fetch(`${API_URL}${endpoint}`, {
     ...options,
     headers: {
@@ -10,8 +21,29 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
       ...options.headers,
     },
   });
+
+  if (res.status === 401) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
+    }
+    throw new ApiError(401, 'Sesión expirada');
+  }
+
   if (res.status === 204) return null;
-  if (!res.ok) throw new Error(await res.text());
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let msg = text || res.statusText || `Error ${res.status}`;
+    try {
+      const parsed = JSON.parse(text);
+      msg = parsed.message ?? parsed.error ?? msg;
+      if (Array.isArray(msg)) msg = msg.join(', ');
+    } catch {
+      /* keep msg */
+    }
+    throw new ApiError(res.status, msg);
+  }
+
   return res.json();
 }
 

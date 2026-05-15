@@ -26,7 +26,7 @@ export default function LoginPage() {
   }
 
   const inputCls =
-    'h-10 bg-paper-deep border border-edge rounded-md text-ink placeholder:text-ink-faint text-[14px] px-3 focus-visible:border-teal focus-visible:ring-2 focus-visible:ring-teal/15 font-mono';
+    'h-10 bg-paper-deep border border-edge rounded-md text-ink placeholder:text-ink-faint text-[14px] px-3 focus-visible:border-teal focus-visible:ring-2 focus-visible:ring-teal/15';
 
   return (
     <div className="min-h-screen bg-paper text-ink flex flex-col">
@@ -58,8 +58,9 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
+                autoFocus
                 autoComplete="email"
-                className={inputCls}
+                className={`${inputCls} font-mono`}
               />
             </Field>
 
@@ -71,7 +72,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className={inputCls}
+                className={`${inputCls} font-mono`}
               />
             </Field>
 
@@ -84,7 +85,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full h-10 text-[13.5px] font-medium bg-teal text-paper hover:bg-ink rounded-md disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
+              className="btn-primary w-full h-10"
             >
               {loading ? (
                 <>

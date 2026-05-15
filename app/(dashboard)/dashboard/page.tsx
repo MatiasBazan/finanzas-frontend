@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { api } from '@/lib/api';
+import { useToast } from '@/components/ui/toast';
 import {
   PieChart,
   Pie,
@@ -84,17 +86,18 @@ function daysUntil(date: string | undefined) {
   return Math.ceil((d.getTime() - now.getTime()) / 86_400_000);
 }
 
-const TOOLTIP_STYLE = {
-  background: 'oklch(1 0 0)',
+const TOOLTIP_STYLE: React.CSSProperties = {
+  background: 'var(--paper-lifted)',
   border: '1px solid var(--rule)',
   borderRadius: 6,
   color: 'var(--ink)',
   fontSize: 12,
   padding: '8px 10px',
-  boxShadow: '0 8px 24px -12px oklch(0.25 0.02 240 / 0.18)',
+  boxShadow: '0 8px 24px -12px oklch(0 0 0 / 0.45)',
 };
 
 export default function DashboardPage() {
+  const toast = useToast();
   const [gastos, setGastos] = useState<Gasto[]>([]);
   const [deudas, setDeudas] = useState<Deuda[]>([]);
   const [proyeccion, setProyeccion] = useState<Proyeccion[]>([]);
@@ -115,18 +118,19 @@ export default function DashboardPage() {
         setDeudas(d);
         setProyeccion(p);
         setTarjetas(t);
-      } catch {
-        setError('No se pudieron cargar los datos.');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'No se pudieron cargar los datos.';
+        setError(msg);
+        toast.error(msg);
       } finally {
         setLoading(false);
       }
     }
     fetchAll();
-  }, []);
-
-  const now = new Date();
+  }, [toast]);
 
   const { totalMes, totalMesPrev, deltaPct } = useMemo(() => {
+    const now = new Date();
     const cur = new Date(now.getFullYear(), now.getMonth(), 1);
     const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -139,7 +143,7 @@ export default function DashboardPage() {
     }
     const dp = prevT > 0 ? ((curT - prevT) / prevT) * 100 : null;
     return { totalMes: curT, totalMesPrev: prevT, deltaPct: dp };
-  }, [gastos, now]);
+  }, [gastos]);
 
   const deudasPendientes = deudas.filter((d) => d.estado === 'pendiente');
   const totalDeudas = deudasPendientes.reduce((a, d) => a + Number(d.montoTotal), 0);
@@ -344,10 +348,22 @@ export default function DashboardPage() {
 
       {/* Recent activity */}
       <section className="mt-10 border-t border-rule pt-7">
-        <SectionHeader
-          title="Actividad reciente"
-          meta={loading ? '' : `Últimos ${Math.min(8, gastos.length)} de ${gastos.length}`}
-        />
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="serif text-[17px] font-medium text-ink tracking-tight">
+            Actividad reciente
+          </h2>
+          <div className="flex items-baseline gap-3 text-[12px] text-ink-mute">
+            {!loading && <span>Últimos {Math.min(8, gastos.length)} de {gastos.length}</span>}
+            {!loading && gastos.length > 8 && (
+              <Link
+                href="/gastos"
+                className="text-teal hover:text-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40 rounded-sm px-1"
+              >
+                Ver todos →
+              </Link>
+            )}
+          </div>
+        </div>
         {loading ? (
           <div className="mt-4 space-y-2">
             {Array.from({ length: 4 }).map((_, i) => (

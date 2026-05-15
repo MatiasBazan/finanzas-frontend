@@ -75,7 +75,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 key={item.href}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
-                className={`relative flex items-center px-3.5 py-2 text-[13.5px] rounded-md transition-colors
+                aria-current={active ? 'page' : undefined}
+                className={`relative flex items-center px-3.5 py-2 text-[13.5px] rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40
                   ${active
                     ? 'text-ink font-medium bg-paper-deep'
                     : 'text-ink-soft hover:text-ink hover:bg-paper-deep/60'
@@ -105,7 +106,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
           <button
             onClick={logout}
-            className="mt-1 w-full text-left px-2 py-1.5 text-[12px] text-ink-mute hover:text-neg rounded-md transition-colors"
+            className="mt-2 pt-2 border-t border-rule-soft w-full text-left px-2 py-1.5 text-[12px] text-ink-mute hover:text-neg rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neg/40"
           >
             Cerrar sesión
           </button>

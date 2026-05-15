@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { useToast } from '@/components/ui/toast';
 import { Input } from '@/components/ui/input';
 import {
   Dialog,
@@ -9,6 +10,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface Deuda {
   id: number;
@@ -29,13 +37,19 @@ interface DeudaForm {
   descripcion: string;
   montoTotal: string;
   cantidadCuotas: string;
+  cuotasPagadas: string;
+  estado: string;
   fechaVencimiento: string;
 }
+
+const ESTADOS = ['pendiente', 'pagada', 'atrasada'] as const;
 
 const EMPTY_FORM: DeudaForm = {
   descripcion: '',
   montoTotal: '',
   cantidadCuotas: '',
+  cuotasPagadas: '0',
+  estado: 'pendiente',
   fechaVencimiento: '',
 };
 
@@ -83,6 +97,7 @@ const INPUT_CLS =
   'h-9 bg-paper-deep border border-edge rounded-md text-ink placeholder:text-ink-faint text-[13px] px-3 focus-visible:border-teal focus-visible:ring-2 focus-visible:ring-teal/15';
 
 export default function DeudasPage() {
+  const toast = useToast();
   const [deudas, setDeudas] = useState<Deuda[]>([]);
   const [proyeccion, setProyeccion] = useState<Proyeccion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,7 +106,7 @@ export default function DeudasPage() {
   const [form, setForm] = useState<DeudaForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
-  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [payingId, setPayingId] = useState<number | null>(null);
 
   async function fetchAll() {
     try {
@@ -101,8 +116,8 @@ export default function DeudasPage() {
       ]);
       setDeudas(d);
       setProyeccion(p);
-    } catch {
-      /* ignore */
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudieron cargar las deudas.');
     } finally {
       setLoading(false);
     }
@@ -110,6 +125,7 @@ export default function DeudasPage() {
 
   useEffect(() => {
     fetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function openCreate() {
@@ -125,6 +141,8 @@ export default function DeudasPage() {
       descripcion: d.descripcion,
       montoTotal: String(d.montoTotal),
       cantidadCuotas: String(d.cantidadCuotas),
+      cuotasPagadas: String(d.cuotasPagadas ?? 0),
+      estado: d.estado || 'pendiente',
       fechaVencimiento: d.fechaVencimiento?.substring(0, 10) ?? '',
     });
     setFormError('');
@@ -136,14 +154,21 @@ export default function DeudasPage() {
     setFormError('');
     setSaving(true);
     try {
-      const body = {
+      const body: Record<string, unknown> = {
         descripcion: form.descripcion,
         montoTotal: Number(form.montoTotal),
         cantidadCuotas: Number(form.cantidadCuotas),
         ...(form.fechaVencimiento ? { fechaVencimiento: form.fechaVencimiento } : {}),
       };
-      if (editingDeuda) await api.patch(`/deudas/${editingDeuda.id}`, body);
-      else await api.post('/deudas', body);
+      if (editingDeuda) {
+        body.cuotasPagadas = Number(form.cuotasPagadas || 0);
+        body.estado = form.estado;
+        await api.patch(`/deudas/${editingDeuda.id}`, body);
+        toast.success('Deuda actualizada');
+      } else {
+        await api.post('/deudas', body);
+        toast.success('Deuda creada');
+      }
       setDialogOpen(false);
       setLoading(true);
       await fetchAll();
@@ -154,14 +179,71 @@ export default function DeudasPage() {
     }
   }
 
-  async function handleDelete(id: number) {
+  async function pagarCuota(d: Deuda) {
+    if (d.cuotasPagadas >= d.cantidadCuotas) return;
+    const nuevas = d.cuotasPagadas + 1;
+    const completed = nuevas >= d.cantidadCuotas;
+    const prev = deudas;
+    setPayingId(d.id);
+    setDeudas((p) =>
+      p.map((x) => x.id === d.id ? { ...x, cuotasPagadas: nuevas, estado: completed ? 'pagada' : x.estado } : x)
+    );
     try {
-      await api.delete(`/deudas/${id}`);
-      setDeudas((prev) => prev.filter((d) => d.id !== id));
-    } catch {
-      /* ignore */
+      const body: Record<string, unknown> = { cuotasPagadas: nuevas };
+      if (completed) body.estado = 'pagada';
+      await api.patch(`/deudas/${d.id}`, body);
+      toast.success(completed ? 'Deuda completada' : `Cuota ${nuevas}/${d.cantidadCuotas} marcada`, {
+        action: {
+          label: 'Deshacer',
+          onClick: async () => {
+            try {
+              await api.patch(`/deudas/${d.id}`, { cuotasPagadas: d.cuotasPagadas, estado: d.estado });
+              await fetchAll();
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : 'No se pudo deshacer.');
+            }
+          },
+        },
+      });
+    } catch (err) {
+      setDeudas(prev);
+      toast.error(err instanceof Error ? err.message : 'No se pudo marcar.');
     } finally {
-      setDeleteId(null);
+      setPayingId(null);
+    }
+  }
+
+  async function handleDelete(d: Deuda) {
+    const snapshot = deudas;
+    setDeudas((prev) => prev.filter((x) => x.id !== d.id));
+    let undone = false;
+    try {
+      await api.delete(`/deudas/${d.id}`);
+      toast.success('Deuda eliminada', {
+        action: {
+          label: 'Deshacer',
+          onClick: async () => {
+            undone = true;
+            try {
+              await api.post('/deudas', {
+                descripcion: d.descripcion,
+                montoTotal: Number(d.montoTotal),
+                cantidadCuotas: d.cantidadCuotas,
+                ...(d.fechaVencimiento ? { fechaVencimiento: d.fechaVencimiento.slice(0, 10) } : {}),
+              });
+              await fetchAll();
+              toast.info('Deuda restaurada');
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : 'No se pudo deshacer.');
+            }
+          },
+        },
+      });
+    } catch (err) {
+      if (!undone) {
+        setDeudas(snapshot);
+        toast.error(err instanceof Error ? err.message : 'No se pudo eliminar.');
+      }
     }
   }
 
@@ -183,16 +265,13 @@ export default function DeudasPage() {
               : `${deudas.length} ${deudas.length === 1 ? 'deuda registrada' : 'deudas registradas'}`}
           </p>
         </div>
-        <button
-          onClick={openCreate}
-          className="h-9 px-3.5 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md transition-colors"
-        >
+        <button onClick={openCreate} className="btn-primary">
           + Nueva deuda
         </button>
       </div>
 
-      {/* Table */}
-      <div className="mt-5 border border-rule rounded-lg bg-paper-lifted overflow-hidden">
+      {/* Table desktop */}
+      <div className="mt-5 border border-rule rounded-lg bg-paper-lifted overflow-hidden hidden lg:block">
         <table className="w-full text-[13px]">
           <thead>
             <tr className="bg-paper-deep border-b border-rule">
@@ -202,7 +281,7 @@ export default function DeudasPage() {
               <th className="eyebrow text-right py-2.5 px-3 font-medium">Por cuota</th>
               <th className="eyebrow text-left py-2.5 px-3 font-medium">Estado</th>
               <th className="eyebrow text-left py-2.5 px-3 font-medium">Vencimiento</th>
-              <th className="py-2.5 px-5 w-32" />
+              <th className="py-2.5 px-5 w-44" />
             </tr>
           </thead>
           <tbody>
@@ -233,11 +312,16 @@ export default function DeudasPage() {
                 const dteTone =
                   dte === null ? 'text-ink-faint'
                   : dte < 0 ? 'text-neg'
+                  : dte === 0 ? 'text-warn font-medium'
                   : dte <= 7 ? 'text-warn'
                   : 'text-ink-mute';
                 const stateColor =
                   d.estado === 'pagada' ? 'text-pos' :
                   d.estado === 'pendiente' ? 'text-warn' : 'text-ink-mute';
+                const stateDot =
+                  d.estado === 'pagada' ? 'bg-pos' :
+                  d.estado === 'pendiente' ? 'bg-warn' : 'bg-ink-mute';
+                const canPay = pagadas < d.cantidadCuotas && d.estado !== 'pagada';
                 return (
                   <tr
                     key={d.id}
@@ -248,73 +332,58 @@ export default function DeudasPage() {
                       <div className="flex items-center gap-2.5 mt-1.5">
                         <div className="w-28 h-1 bg-paper-deep rounded-full overflow-hidden">
                           <div
-                            className="h-full bg-pos rounded-full"
+                            className={`h-full rounded-full ${d.estado === 'pagada' ? 'bg-pos' : 'bg-teal'}`}
                             style={{ width: `${progreso}%` }}
                           />
                         </div>
                         <span className="font-mono text-[11px] text-ink-mute">
-                          {progreso.toFixed(0)}%
+                          {pagadas}/{d.cantidadCuotas} · {progreso.toFixed(0)}%
                         </span>
                       </div>
                     </td>
-                    <td className="py-3.5 px-3 text-right font-mono text-ink">
-                      <span className="peso">$</span>
-                      {fmtNum(Number(d.montoTotal))}
+                    <td className="py-3.5 px-3 text-right font-mono text-ink whitespace-nowrap">
+                      <span className="peso">$</span>{fmtNum(Number(d.montoTotal))}
                     </td>
                     <td className="py-3.5 px-3 font-mono text-ink-soft">
                       {pagadas}/{d.cantidadCuotas}
                     </td>
-                    <td className="py-3.5 px-3 text-right font-mono text-ink-soft">
-                      <span className="peso">$</span>
-                      {fmtNum(montoCuota)}
+                    <td className="py-3.5 px-3 text-right font-mono text-ink-soft whitespace-nowrap">
+                      <span className="peso">$</span>{fmtNum(montoCuota)}
                     </td>
                     <td className={`py-3.5 px-3 ${stateColor} text-[12px] capitalize`}>
                       <span className="inline-flex items-center gap-1.5">
-                        <span className={`h-1.5 w-1.5 rounded-full ${stateColor === 'text-pos' ? 'bg-pos' : stateColor === 'text-warn' ? 'bg-warn' : 'bg-ink-mute'}`} />
+                        <span className={`h-1.5 w-1.5 rounded-full ${stateDot}`} />
                         {d.estado}
                       </span>
                     </td>
-                    <td className="py-3.5 px-3">
+                    <td className="py-3.5 px-3 whitespace-nowrap">
                       <div className="font-mono text-[12px] text-ink-mute">
                         {fmtDate(d.fechaVencimiento)}
                       </div>
                       {dte !== null && (
                         <div className={`font-mono text-[11px] ${dteTone}`}>
-                          {dte >= 0 ? `en ${dte}d` : `vencida hace ${Math.abs(dte)}d`}
+                          {dte === 0 ? 'vence hoy' : dte > 0 ? `en ${dte}d` : `vencida hace ${Math.abs(dte)}d`}
                         </div>
                       )}
                     </td>
                     <td className="py-3.5 px-5">
-                      <div className="flex gap-3 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          className="text-[12px] text-ink-mute hover:text-teal transition-colors"
-                          onClick={() => openEdit(d)}
-                        >
-                          Editar
-                        </button>
-                        {deleteId === d.id ? (
-                          <>
-                            <button
-                              className="text-[12px] text-neg font-medium"
-                              onClick={() => handleDelete(d.id)}
-                            >
-                              Confirmar
-                            </button>
-                            <button
-                              className="text-[12px] text-ink-mute hover:text-ink"
-                              onClick={() => setDeleteId(null)}
-                            >
-                              Cancelar
-                            </button>
-                          </>
-                        ) : (
+                      <div className="flex gap-3 justify-end opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                        {canPay && (
                           <button
-                            className="text-[12px] text-ink-mute hover:text-neg transition-colors"
-                            onClick={() => setDeleteId(d.id)}
+                            className="btn-ghost btn-ghost-accent disabled:opacity-50"
+                            onClick={() => pagarCuota(d)}
+                            disabled={payingId === d.id}
+                            title="Marcar siguiente cuota pagada"
                           >
-                            Eliminar
+                            + Pagar cuota
                           </button>
                         )}
+                        <button className="btn-ghost btn-ghost-accent" onClick={() => openEdit(d)}>
+                          Editar
+                        </button>
+                        <button className="btn-ghost btn-ghost-danger" onClick={() => handleDelete(d)}>
+                          Eliminar
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -323,6 +392,83 @@ export default function DeudasPage() {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Cards mobile */}
+      <div className="mt-5 lg:hidden space-y-3">
+        {loading ? (
+          Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-32 bg-paper-deep animate-pulse rounded-lg" />
+          ))
+        ) : deudas.length === 0 ? (
+          <div className="py-14 text-center border border-rule rounded-lg bg-paper-lifted">
+            <span className="text-[13px] text-ink-faint">Aún no hay deudas registradas</span>
+          </div>
+        ) : (
+          deudas.map((d) => {
+            const pagadas = d.cuotasPagadas ?? 0;
+            const progreso = d.cantidadCuotas > 0 ? (pagadas / d.cantidadCuotas) * 100 : 0;
+            const dte = daysUntil(d.fechaVencimiento);
+            const dteTone =
+              dte === null ? 'text-ink-faint'
+              : dte < 0 ? 'text-neg'
+              : dte === 0 ? 'text-warn font-medium'
+              : dte <= 7 ? 'text-warn'
+              : 'text-ink-mute';
+            const stateColor =
+              d.estado === 'pagada' ? 'text-pos' :
+              d.estado === 'pendiente' ? 'text-warn' : 'text-ink-mute';
+            const stateDot =
+              d.estado === 'pagada' ? 'bg-pos' :
+              d.estado === 'pendiente' ? 'bg-warn' : 'bg-ink-mute';
+            const canPay = pagadas < d.cantidadCuotas && d.estado !== 'pagada';
+            return (
+              <article key={d.id} className="border border-rule rounded-lg bg-paper-lifted p-4">
+                <div className="flex items-baseline justify-between gap-3">
+                  <h3 className="text-ink text-[14px] font-medium truncate">{d.descripcion}</h3>
+                  <span className="font-mono text-ink text-[15px] whitespace-nowrap">
+                    <span className="peso">$</span>{fmtNum(Number(d.montoTotal))}
+                  </span>
+                </div>
+                <div className="mt-2.5 flex items-center gap-2.5">
+                  <div className="flex-1 h-1.5 bg-paper-deep rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${d.estado === 'pagada' ? 'bg-pos' : 'bg-teal'}`}
+                      style={{ width: `${progreso}%` }}
+                    />
+                  </div>
+                  <span className="font-mono text-[11.5px] text-ink-mute whitespace-nowrap">
+                    {pagadas}/{d.cantidadCuotas}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2 text-[12px]">
+                  <span className={`inline-flex items-center gap-1.5 ${stateColor} capitalize`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${stateDot}`} />
+                    {d.estado}
+                  </span>
+                  {dte !== null && (
+                    <span className={`font-mono ${dteTone}`}>
+                      {dte === 0 ? 'vence hoy' : dte > 0 ? `en ${dte}d` : `vencida hace ${Math.abs(dte)}d`}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-3 pt-3 border-t border-rule-soft flex flex-wrap items-center gap-x-4 gap-y-2">
+                  {canPay && (
+                    <button
+                      onClick={() => pagarCuota(d)}
+                      disabled={payingId === d.id}
+                      className="btn-ghost btn-ghost-accent disabled:opacity-50"
+                    >
+                      + Pagar cuota
+                    </button>
+                  )}
+                  <button onClick={() => openEdit(d)} className="btn-ghost btn-ghost-accent">Editar</button>
+                  <button onClick={() => handleDelete(d)} className="btn-ghost btn-ghost-danger ml-auto">Eliminar</button>
+                </div>
+              </article>
+            );
+          })
+        )}
       </div>
 
       {/* Proyección */}
@@ -356,21 +502,20 @@ export default function DeudasPage() {
               return (
                 <li
                   key={p.mes}
-                  className="grid grid-cols-[140px_1fr_140px_70px] items-center gap-4 py-2.5"
+                  className="grid grid-cols-[110px_1fr_auto] sm:grid-cols-[140px_1fr_160px] items-center gap-4 py-2.5"
                 >
-                  <span className="text-[13px] text-ink-soft capitalize">{fmtMes(p.mes)}</span>
+                  <span className="text-[13px] text-ink-soft capitalize truncate">{fmtMes(p.mes)}</span>
                   <div className="h-1.5 bg-paper-deep rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full ${isHigh ? 'bg-warn' : 'bg-teal'}`}
                       style={{ width: `${w.toFixed(1)}%` }}
                     />
                   </div>
-                  <span className={`font-mono text-[13px] text-right ${isHigh ? 'text-warn' : 'text-ink'}`}>
-                    <span className="peso">$</span>
-                    {fmtNum(p.total)}
-                  </span>
-                  <span className={`text-[11px] text-right ${isHigh ? 'text-warn' : 'text-ink-faint'}`}>
-                    {isHigh ? 'sobre promedio' : ''}
+                  <span className={`font-mono text-[13px] text-right whitespace-nowrap ${isHigh ? 'text-warn' : 'text-ink'}`}>
+                    <span className="peso">$</span>{fmtNum(p.total)}
+                    {isHigh && (
+                      <span className="ml-2 text-[10.5px] text-warn">↑ promedio</span>
+                    )}
                   </span>
                 </li>
               );
@@ -395,6 +540,7 @@ export default function DeudasPage() {
                 value={form.descripcion}
                 onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
                 required
+                autoFocus
                 className={INPUT_CLS}
               />
             </Field>
@@ -426,6 +572,34 @@ export default function DeudasPage() {
               </Field>
             </div>
 
+            {editingDeuda && (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Cuotas pagadas">
+                  <Input
+                    type="number"
+                    min="0"
+                    max={form.cantidadCuotas || undefined}
+                    step="1"
+                    value={form.cuotasPagadas}
+                    onChange={(e) => setForm({ ...form, cuotasPagadas: e.target.value })}
+                    className={`${INPUT_CLS} font-mono`}
+                  />
+                </Field>
+                <Field label="Estado">
+                  <Select value={form.estado} onValueChange={(v) => setForm({ ...form, estado: v ?? 'pendiente' })}>
+                    <SelectTrigger className="h-9 bg-paper-deep border border-edge rounded-md text-[13px] text-ink">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-paper-lifted border border-rule rounded-md lift">
+                      {ESTADOS.map((s) => (
+                        <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+            )}
+
             <Field label="Vencimiento" hint="opcional">
               <Input
                 type="date"
@@ -444,16 +618,12 @@ export default function DeudasPage() {
             <div className="flex justify-end gap-2 pt-3 border-t border-rule">
               <button
                 type="button"
-                className="h-9 px-3.5 text-[13px] text-ink-mute hover:text-ink transition-colors"
+                className="h-9 px-3.5 text-[13px] text-ink-mute hover:text-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40 rounded-md"
                 onClick={() => setDialogOpen(false)}
               >
                 Cancelar
               </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="h-9 px-4 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md disabled:opacity-50 transition-colors"
-              >
+              <button type="submit" disabled={saving} className="btn-primary">
                 {saving ? 'Guardando…' : editingDeuda ? 'Actualizar' : 'Guardar deuda'}
               </button>
             </div>

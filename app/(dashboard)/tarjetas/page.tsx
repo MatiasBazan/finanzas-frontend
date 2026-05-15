@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { useToast } from '@/components/ui/toast';
 import { parsearResumenPDF, type ResumenTarjeta } from '@/lib/parse-resumen';
 import {
   Dialog,
@@ -9,6 +10,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+
+const CUOTAS_COLLAPSED = 3;
 
 interface TarjetaResumen {
   id: number;
@@ -62,19 +65,22 @@ function fmtMes(mes: string) {
   });
 }
 
-function daysUntil(date: string) {
+function daysUntil(date: string | null | undefined) {
+  if (!date) return null;
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
   const v = new Date(date + 'T00:00:00');
+  if (isNaN(v.getTime())) return null;
   return Math.ceil((v.getTime() - hoy.getTime()) / 86_400_000);
 }
 
 type ImportStep = 'input' | 'loading' | 'preview' | 'saving';
 
 export default function TarjetasPage() {
+  const toast = useToast();
   const [tarjetas, setTarjetas] = useState<TarjetaResumen[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [expandedCuotas, setExpandedCuotas] = useState<Set<number>>(new Set());
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [step, setStep] = useState<ImportStep>('input');
@@ -84,11 +90,20 @@ export default function TarjetasPage() {
   const [importError, setImportError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  function toggleCuotas(id: number) {
+    setExpandedCuotas((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   async function fetchTarjetas() {
     try {
       setTarjetas(await api.get('/tarjetas'));
-    } catch {
-      /* ignore */
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudieron cargar las tarjetas.');
     } finally {
       setLoading(false);
     }
@@ -96,6 +111,7 @@ export default function TarjetasPage() {
 
   useEffect(() => {
     fetchTarjetas();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function openDialog() {
@@ -149,6 +165,7 @@ export default function TarjetasPage() {
     setStep('saving');
     try {
       await api.post('/tarjetas/importar-resumen', preview);
+      toast.success('Resumen importado');
       setDialogOpen(false);
       setLoading(true);
       await fetchTarjetas();
@@ -158,14 +175,15 @@ export default function TarjetasPage() {
     }
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete(t: TarjetaResumen) {
+    const snapshot = tarjetas;
+    setTarjetas((prev) => prev.filter((x) => x.id !== t.id));
     try {
-      await api.delete(`/tarjetas/${id}`);
-      setTarjetas((prev) => prev.filter((t) => t.id !== id));
-    } catch {
-      /* ignore */
-    } finally {
-      setDeleteId(null);
+      await api.delete(`/tarjetas/${t.id}`);
+      toast.success(`Tarjeta ${t.nombre} eliminada`);
+    } catch (err) {
+      setTarjetas(snapshot);
+      toast.error(err instanceof Error ? err.message : 'No se pudo eliminar.');
     }
   }
 
@@ -181,10 +199,7 @@ export default function TarjetasPage() {
               : `${tarjetas.length} ${tarjetas.length === 1 ? 'tarjeta' : 'tarjetas'} en seguimiento`}
           </p>
         </div>
-        <button
-          onClick={openDialog}
-          className="h-9 px-3.5 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md transition-colors"
-        >
+        <button onClick={openDialog} className="btn-primary">
           Importar resumen
         </button>
       </div>
@@ -202,10 +217,7 @@ export default function TarjetasPage() {
           <p className="mt-1 text-[13px] text-ink-mute">
             Subí un PDF y la IA extrae saldos, vencimientos y cuotas.
           </p>
-          <button
-            onClick={openDialog}
-            className="mt-5 h-9 px-3.5 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md transition-colors"
-          >
+          <button onClick={openDialog} className="btn-primary mt-5">
             Importar primer resumen
           </button>
         </div>
@@ -214,11 +226,15 @@ export default function TarjetasPage() {
           {tarjetas.map((t) => {
             const dte = daysUntil(t.vencimiento);
             const dteTone =
-              dte < 0 ? 'text-neg'
-              : dte <= 7 ? 'text-warn'
+              dte === null ? 'text-ink-faint'
+              : dte < 0 ? 'text-neg'
+              : dte === 0 ? 'text-warn font-medium'
               : dte <= 15 ? 'text-warn'
               : 'text-pos';
             const cuotasTotal = t.cuotasAVencer.reduce((s, c) => s + Number(c.total), 0);
+            const cuotasExpanded = expandedCuotas.has(t.id);
+            const cuotasShown = cuotasExpanded ? t.cuotasAVencer : t.cuotasAVencer.slice(0, CUOTAS_COLLAPSED);
+            const cuotasHidden = t.cuotasAVencer.length - cuotasShown.length;
             return (
               <article
                 key={t.id}
@@ -232,29 +248,16 @@ export default function TarjetasPage() {
                       {t.nombre}
                     </h3>
                   </div>
-                  {deleteId === t.id ? (
-                    <div className="flex gap-2 items-center shrink-0 ml-3">
-                      <button
-                        className="text-[12px] text-neg font-medium"
-                        onClick={() => handleDelete(t.id)}
-                      >
-                        Confirmar
-                      </button>
-                      <button
-                        className="text-[12px] text-ink-mute hover:text-ink"
-                        onClick={() => setDeleteId(null)}
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      className="text-[12px] text-ink-mute hover:text-neg transition-colors shrink-0 ml-3"
-                      onClick={() => setDeleteId(t.id)}
-                    >
-                      Eliminar
-                    </button>
-                  )}
+                  <button
+                    className="btn-ghost btn-ghost-danger shrink-0 ml-3"
+                    onClick={() => {
+                      if (confirm(`¿Eliminar tarjeta "${t.nombre}"? Esta acción no se puede deshacer.`)) {
+                        handleDelete(t);
+                      }
+                    }}
+                  >
+                    Eliminar
+                  </button>
                 </div>
 
                 {/* Saldo principal */}
@@ -289,7 +292,13 @@ export default function TarjetasPage() {
                       {fmtDate(t.vencimiento + 'T00:00:00')}
                     </p>
                     <p className={`mt-0.5 text-[11.5px] ${dteTone}`}>
-                      {dte >= 0 ? `en ${dte} días` : `vencida hace ${Math.abs(dte)}d`}
+                      {dte === null
+                        ? '—'
+                        : dte === 0
+                          ? 'vence hoy'
+                          : dte > 0
+                            ? `en ${dte} días`
+                            : `vencida hace ${Math.abs(dte)}d`}
                     </p>
                   </div>
                   <div>
@@ -317,7 +326,7 @@ export default function TarjetasPage() {
                       </p>
                     </div>
                     <ul className="divide-y divide-rule-soft">
-                      {t.cuotasAVencer.map((c) => (
+                      {cuotasShown.map((c) => (
                         <li
                           key={c.mes}
                           className="flex items-center justify-between py-2 text-[13px]"
@@ -330,6 +339,14 @@ export default function TarjetasPage() {
                         </li>
                       ))}
                     </ul>
+                    {t.cuotasAVencer.length > CUOTAS_COLLAPSED && (
+                      <button
+                        onClick={() => toggleCuotas(t.id)}
+                        className="mt-2 text-[11.5px] text-teal hover:text-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40 rounded-sm px-1"
+                      >
+                        {cuotasExpanded ? '− Ver menos' : `+ Ver ${cuotasHidden} más`}
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -422,16 +439,12 @@ export default function TarjetasPage() {
 
               <div className="flex justify-end gap-2 pt-3 border-t border-rule">
                 <button
-                  className="h-9 px-3.5 text-[13px] text-ink-mute hover:text-ink transition-colors"
+                  className="h-9 px-3.5 text-[13px] text-ink-mute hover:text-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40 rounded-md"
                   onClick={() => setDialogOpen(false)}
                 >
                   Cancelar
                 </button>
-                <button
-                  onClick={handleAnalizar}
-                  disabled={!pdfFile}
-                  className="h-9 px-4 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md disabled:opacity-50 transition-colors"
-                >
+                <button onClick={handleAnalizar} disabled={!pdfFile} className="btn-primary">
                   Analizar PDF
                 </button>
               </div>
@@ -439,10 +452,20 @@ export default function TarjetasPage() {
           )}
 
           {step === 'loading' && (
-            <div className="py-14 flex flex-col items-center gap-3">
-              <span className="h-2 w-2 rounded-full bg-teal animate-pulse" />
-              <p className="serif text-[15px] text-ink">Analizando con Claude…</p>
-              <p className="text-[12px] text-ink-mute">Tarda 5 a 10 segundos.</p>
+            <div className="py-8">
+              <div className="flex flex-col items-center gap-2">
+                <Spinner />
+                <p className="serif text-[15px] text-ink">Analizando con Claude…</p>
+                <p className="text-[12px] text-ink-mute">Tarda 5 a 10 segundos</p>
+              </div>
+              <div className="mt-6 border border-rule rounded-md divide-y divide-rule-soft">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="grid grid-cols-2 px-3 py-2.5">
+                    <div className="h-2.5 bg-paper-deep animate-pulse rounded-sm w-20" />
+                    <div className="h-2.5 bg-paper-deep animate-pulse rounded-sm ml-auto w-24" />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -496,15 +519,12 @@ export default function TarjetasPage() {
 
               <div className="flex justify-end gap-2 pt-3 border-t border-rule">
                 <button
-                  className="h-9 px-3.5 text-[13px] text-ink-mute hover:text-ink transition-colors"
+                  className="h-9 px-3.5 text-[13px] text-ink-mute hover:text-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/40 rounded-md"
                   onClick={() => setStep('input')}
                 >
                   ← Volver
                 </button>
-                <button
-                  onClick={handleConfirmar}
-                  className="h-9 px-4 text-[13px] font-medium bg-teal text-paper hover:bg-ink rounded-md transition-colors"
-                >
+                <button onClick={handleConfirmar} className="btn-primary">
                   Guardar resumen
                 </button>
               </div>
@@ -513,13 +533,28 @@ export default function TarjetasPage() {
 
           {step === 'saving' && (
             <div className="py-12 flex flex-col items-center gap-3">
-              <span className="h-2 w-2 rounded-full bg-teal animate-pulse" />
+              <Spinner />
               <p className="serif text-[15px] text-ink">Guardando…</p>
             </div>
           )}
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      className="animate-spin text-teal"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" fill="none" />
+      <path d="M21 12a9 9 0 0 1-9 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+    </svg>
   );
 }
 

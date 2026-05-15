@@ -65,6 +65,7 @@ export default function RegisterPage() {
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
                 required
+                autoFocus
                 autoComplete="name"
                 className={inputCls}
               />
@@ -103,7 +104,7 @@ export default function RegisterPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full h-10 text-[13.5px] font-medium bg-teal text-paper hover:bg-ink rounded-md disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
+              className="btn-primary w-full h-10"
             >
               {loading ? (
                 <>
